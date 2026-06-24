@@ -1,0 +1,35 @@
+{
+  "name": "@highvault/promis-abis",
+  "version": "0.0.8",
+  "description": "ABI exports for Promis smart contracts",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "abi"
+  ],
+  "sideEffects": false,
+  "license": "MIT",
+  "scripts": {
+    "build": "tsup",
+    "clean": "rimraf dist",
+    "prepare": "npm run build",
+    "publish": "npm publish --access public"
+  },
+  "dependencies": {
+    "viem": "^2.0.0"
+  },
+  "devDependencies": {
+    "rimraf": "^5.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0"
+  }
+}

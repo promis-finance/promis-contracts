@@ -1,0 +1,217 @@
+[
+  {
+    "inputs": [],
+    "name": "CallerMismatch",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "DirectCallForbidden",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "caller",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256[]",
+        "name": "unbondingIndices",
+        "type": "uint256[]"
+      },
+      {
+        "internalType": "uint256[]",
+        "name": "unlockedPositionsToMerge",
+        "type": "uint256[]"
+      }
+    ],
+    "name": "executeCompleteWithdraw",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "caller",
+        "type": "address"
+      },
+      {
+        "internalType": "uint8",
+        "name": "tierID",
+        "type": "uint8"
+      },
+      {
+        "internalType": "uint256",
+        "name": "amount",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256[]",
+        "name": "unlockedPositionsToMerge",
+        "type": "uint256[]"
+      }
+    ],
+    "name": "executeCreateDepositRequest",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "caller",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256[]",
+        "name": "positionIDs",
+        "type": "uint256[]"
+      },
+      {
+        "internalType": "uint256[]",
+        "name": "unlockedPositionsToMerge",
+        "type": "uint256[]"
+      }
+    ],
+    "name": "executeCreateWithdrawRequest",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_caller",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "_requestID",
+        "type": "uint256"
+      },
+      {
+        "internalType": "enum ProTokenPlusTypes.ProofKind",
+        "name": "_proofKind",
+        "type": "uint8"
+      },
+      {
+        "internalType": "bytes",
+        "name": "_proof",
+        "type": "bytes"
+      }
+    ],
+    "name": "executeFinalizeDepositRequest",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "positionID",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_caller",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "_requestID",
+        "type": "uint256"
+      },
+      {
+        "internalType": "enum ProTokenPlusTypes.ProofKind",
+        "name": "_proofKind",
+        "type": "uint8"
+      },
+      {
+        "internalType": "bytes",
+        "name": "_proof",
+        "type": "bytes"
+      }
+    ],
+    "name": "executeFinalizeWithdrawRequest",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "unbondingIndex",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "caller",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256[]",
+        "name": "positionIds",
+        "type": "uint256[]"
+      },
+      {
+        "internalType": "uint256",
+        "name": "amount",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint8",
+        "name": "toTierId",
+        "type": "uint8"
+      },
+      {
+        "internalType": "uint256[]",
+        "name": "unlockedPositionsToMerge",
+        "type": "uint256[]"
+      }
+    ],
+    "name": "executeRelock",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "newPositionId",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "caller",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256[]",
+        "name": "positionIds",
+        "type": "uint256[]"
+      }
+    ],
+    "name": "executeUnlockedMerge",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "newPositionId",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }
+]

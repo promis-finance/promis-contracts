@@ -1,0 +1,884 @@
+[
+  {
+    "inputs": [],
+    "name": "GreaterThanAllowed",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "LengthMismatch",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NoYAssetsFound",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NotAdmin",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NotAdminOrOperator",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NotEnabled",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "NotPendingAdmin",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "PausedInSettings",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "Unauthorized",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "yAsset",
+        "type": "address"
+      }
+    ],
+    "name": "YAssetInUseForUnmint",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "yAsset",
+        "type": "address"
+      }
+    ],
+    "name": "YAssetNotFound",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "YOperationsHandlerInUseBalanceNotZero",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ZeroAddress",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ZeroRatio",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ZeroSources",
+    "type": "error"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "previousAdmin",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "newAdmin",
+        "type": "address"
+      }
+    ],
+    "name": "AdminAccepted",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "currentAdmin",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "proposedAdmin",
+        "type": "address"
+      }
+    ],
+    "name": "AdminProposed",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "authority",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "bool",
+        "name": "prevStatus",
+        "type": "bool"
+      },
+      {
+        "indexed": false,
+        "internalType": "bool",
+        "name": "NewStatus",
+        "type": "bool"
+      }
+    ],
+    "name": "AuthoritySet",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "previousExternalBusiness",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "newExternalBusiness",
+        "type": "address"
+      }
+    ],
+    "name": "ExternalBusinessSet",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "previousOperator",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "newOperator",
+        "type": "address"
+      }
+    ],
+    "name": "OperatorSet",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "maxPriceDeviation",
+        "type": "uint256"
+      }
+    ],
+    "name": "OracleAggregationSettingsSet",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "previousOperations",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "newOperations",
+        "type": "address"
+      }
+    ],
+    "name": "ProTokenOperationsSet",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "oraclePriceSource",
+        "type": "address"
+      }
+    ],
+    "name": "ProTokenPriceSettingsSet",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "previousProToken",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "newProToken",
+        "type": "address"
+      }
+    ],
+    "name": "ProTokenSet",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "previousUnmintHandler",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "newUnmintHandler",
+        "type": "address"
+      }
+    ],
+    "name": "ProTokenUnmintHandlerSet",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "previousStrategsit",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "newStrategist",
+        "type": "address"
+      }
+    ],
+    "name": "StrategistSet",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "previous",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "current",
+        "type": "address"
+      }
+    ],
+    "name": "StrategyVaultSet",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "address[]",
+        "name": "oldAssets",
+        "type": "address[]"
+      },
+      {
+        "indexed": false,
+        "internalType": "address[]",
+        "name": "newAssets",
+        "type": "address[]"
+      }
+    ],
+    "name": "UnmintYAssetsUpdated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "yAsset",
+        "type": "address"
+      }
+    ],
+    "name": "YAssetRemoved",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "yAsset",
+        "type": "address"
+      }
+    ],
+    "name": "YAssetSet",
+    "type": "event"
+  },
+  {
+    "inputs": [],
+    "name": "acceptAdmin",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "getAdmin",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "admin",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "getExternalBusiness",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "externalBusiness",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "getOperator",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "operator",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "getOracleAggregationSettings",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "uint256",
+            "name": "maxPriceDeviation",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct ProTokenOperationsTypes.OracleAggregationSettings",
+        "name": "settings",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "getProTokenInfo",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "address",
+            "name": "proToken",
+            "type": "address"
+          },
+          {
+            "internalType": "address",
+            "name": "proTokenOperations",
+            "type": "address"
+          },
+          {
+            "internalType": "address",
+            "name": "proTokenUnmintHandler",
+            "type": "address"
+          },
+          {
+            "components": [
+              {
+                "internalType": "address",
+                "name": "oraclePriceSource",
+                "type": "address"
+              }
+            ],
+            "internalType": "struct ProTokenSettingsTypes.ProTokenPriceSettings",
+            "name": "priceSettings",
+            "type": "tuple"
+          }
+        ],
+        "internalType": "struct ProTokenSettingsTypes.GetProTokenInfoResponse",
+        "name": "info",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "getStrategist",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "strategist",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "getStrategyVault",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "_strategyVault",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "getUnmintYAssets",
+    "outputs": [
+      {
+        "internalType": "address[]",
+        "name": "unmintYAssets",
+        "type": "address[]"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address[]",
+        "name": "_yAssets",
+        "type": "address[]"
+      }
+    ],
+    "name": "getYAssets",
+    "outputs": [
+      {
+        "components": [
+          {
+            "components": [
+              {
+                "internalType": "address",
+                "name": "yAsset",
+                "type": "address"
+              },
+              {
+                "components": [
+                  {
+                    "internalType": "address",
+                    "name": "yOperationsHandler",
+                    "type": "address"
+                  },
+                  {
+                    "internalType": "uint8",
+                    "name": "decimals",
+                    "type": "uint8"
+                  },
+                  {
+                    "internalType": "bool",
+                    "name": "isEnabled",
+                    "type": "bool"
+                  },
+                  {
+                    "internalType": "bool",
+                    "name": "isPaused",
+                    "type": "bool"
+                  },
+                  {
+                    "internalType": "uint256",
+                    "name": "unmintFeePer",
+                    "type": "uint256"
+                  },
+                  {
+                    "components": [
+                      {
+                        "internalType": "uint256",
+                        "name": "staticPriceSource",
+                        "type": "uint256"
+                      },
+                      {
+                        "internalType": "uint256",
+                        "name": "usdCap",
+                        "type": "uint256"
+                      },
+                      {
+                        "internalType": "address[]",
+                        "name": "oraclePriceSources",
+                        "type": "address[]"
+                      }
+                    ],
+                    "internalType": "struct ProTokenSettingsTypes.YAssetPriceSettings",
+                    "name": "priceSettings",
+                    "type": "tuple"
+                  }
+                ],
+                "internalType": "struct ProTokenSettingsTypes.YAssetSettings",
+                "name": "settings",
+                "type": "tuple"
+              }
+            ],
+            "internalType": "struct ProTokenSettingsTypes.GetYAssetResponse[]",
+            "name": "yAssets",
+            "type": "tuple[]"
+          }
+        ],
+        "internalType": "struct ProTokenSettingsTypes.GetYAssetsResponse",
+        "name": "response",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_addr",
+        "type": "address"
+      }
+    ],
+    "name": "isAuthority",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "isTrue",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "isPaused",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "paused",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "pause",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_newAdmin",
+        "type": "address"
+      }
+    ],
+    "name": "proposeAdmin",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_yAsset",
+        "type": "address"
+      }
+    ],
+    "name": "removeYAsset",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_authority",
+        "type": "address"
+      },
+      {
+        "internalType": "bool",
+        "name": "_status",
+        "type": "bool"
+      }
+    ],
+    "name": "setAuthority",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_externalBusiness",
+        "type": "address"
+      }
+    ],
+    "name": "setExternalBusiness",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_operator",
+        "type": "address"
+      }
+    ],
+    "name": "setOperator",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "_maxPriceDeviation",
+        "type": "uint256"
+      }
+    ],
+    "name": "setOracleAggregationSettings",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_proToken",
+        "type": "address"
+      }
+    ],
+    "name": "setProToken",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_proTokenOperations",
+        "type": "address"
+      }
+    ],
+    "name": "setProTokenOperations",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "components": [
+          {
+            "internalType": "address",
+            "name": "oraclePriceSource",
+            "type": "address"
+          }
+        ],
+        "internalType": "struct ProTokenSettingsTypes.ProTokenPriceSettings",
+        "name": "_proTokenPriceSettings",
+        "type": "tuple"
+      }
+    ],
+    "name": "setProTokenPriceSettings",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_proTokenUnmintHandler",
+        "type": "address"
+      }
+    ],
+    "name": "setProTokenUnmintHandler",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_strategist",
+        "type": "address"
+      }
+    ],
+    "name": "setStrategist",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_strategyVault",
+        "type": "address"
+      }
+    ],
+    "name": "setStrategyVault",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address[]",
+        "name": "_unmintYAssets",
+        "type": "address[]"
+      }
+    ],
+    "name": "setUnmintYAssets",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_yAsset",
+        "type": "address"
+      },
+      {
+        "components": [
+          {
+            "internalType": "address",
+            "name": "yOperationsHandler",
+            "type": "address"
+          },
+          {
+            "internalType": "uint8",
+            "name": "decimals",
+            "type": "uint8"
+          },
+          {
+            "internalType": "bool",
+            "name": "isEnabled",
+            "type": "bool"
+          },
+          {
+            "internalType": "bool",
+            "name": "isPaused",
+            "type": "bool"
+          },
+          {
+            "internalType": "uint256",
+            "name": "unmintFeePer",
+            "type": "uint256"
+          },
+          {
+            "components": [
+              {
+                "internalType": "uint256",
+                "name": "staticPriceSource",
+                "type": "uint256"
+              },
+              {
+                "internalType": "uint256",
+                "name": "usdCap",
+                "type": "uint256"
+              },
+              {
+                "internalType": "address[]",
+                "name": "oraclePriceSources",
+                "type": "address[]"
+              }
+            ],
+            "internalType": "struct ProTokenSettingsTypes.YAssetPriceSettings",
+            "name": "priceSettings",
+            "type": "tuple"
+          }
+        ],
+        "internalType": "struct ProTokenSettingsTypes.YAssetSettings",
+        "name": "_settings",
+        "type": "tuple"
+      }
+    ],
+    "name": "setYAsset",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "unpause",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }
+]

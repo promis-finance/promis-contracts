@@ -1,0 +1,135 @@
+[
+  {
+    "inputs": [],
+    "name": "AssetOracleMappingNotFound",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "FutureOracleTimestamp",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidAddr",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidInputs",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "InvalidOraclePrice",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "OracleIdTooLong",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "StaleOracleData",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "Unauthorized",
+    "type": "error"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "asset",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "oracleId",
+        "type": "string"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint8",
+        "name": "oraclePriceDecimals",
+        "type": "uint8"
+      }
+    ],
+    "name": "AssetToOracleIdMappingUpdated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "newThreshold",
+        "type": "uint256"
+      }
+    ],
+    "name": "StalenessThresholdUpdated",
+    "type": "event"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "asset",
+        "type": "address"
+      }
+    ],
+    "name": "getOracleIdForAsset",
+    "outputs": [
+      {
+        "internalType": "string",
+        "name": "",
+        "type": "string"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address[]",
+        "name": "assets",
+        "type": "address[]"
+      },
+      {
+        "internalType": "string[]",
+        "name": "oracleIds",
+        "type": "string[]"
+      },
+      {
+        "internalType": "uint8[]",
+        "name": "oraclePriceDecimals",
+        "type": "uint8[]"
+      }
+    ],
+    "name": "setAssetToOracleIdMappings",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "_stalenessThreshold",
+        "type": "uint256"
+      }
+    ],
+    "name": "setStalenessThreshold",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }
+]
