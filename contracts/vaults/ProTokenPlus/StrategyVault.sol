@@ -90,6 +90,15 @@ contract StrategyVault is
         _;
     }
 
+    modifier onlyAdminOrOperator() {
+        IProTokenSettings ownerSource = IProTokenSettings(proTokenSettings);
+        if (
+            msg.sender != ownerSource.getOperator() &&
+            msg.sender != ownerSource.getAdmin()
+        ) revert NotAdminOrOperator();
+        _;
+    }
+
     modifier onlyStrategist() {
         if (msg.sender != IProTokenSettings(proTokenSettings).getStrategist()) revert NotStrategist();
         _;
@@ -347,7 +356,7 @@ contract StrategyVault is
     function claimGrowth(
         address to,
         uint256 proUSDAmount
-    ) external onlyAdmin nonReentrant returns (uint256 withdrawn) {
+    ) external onlyAdminOrOperator nonReentrant returns (uint256 withdrawn) {
         _accrueGrowth();
 
         if (to == address(0)) revert ZeroAddress();
@@ -370,7 +379,7 @@ contract StrategyVault is
     
     function claimYield(
         uint256 amount
-    ) external override onlyAdmin returns (uint256 claimed) {
+    ) external override onlyAdminOrOperator returns (uint256 claimed) {
         _accrueGrowth();
 
         if (amount == 0) revert ZeroAmount();

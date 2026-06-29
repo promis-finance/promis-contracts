@@ -64,6 +64,11 @@
   },
   {
     "inputs": [],
+    "name": "NotAdminOrOperator",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "NotProTokenPlus",
     "type": "error"
   },

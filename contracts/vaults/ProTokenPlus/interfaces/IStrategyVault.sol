@@ -12,6 +12,7 @@ interface IStrategyVault {
     error ZeroAddress();
     error ZeroAmount();
     error NotAdmin();
+    error NotAdminOrOperator();
     error NotStrategist();
     error NotProTokenPlus();
     error SameAddress();
