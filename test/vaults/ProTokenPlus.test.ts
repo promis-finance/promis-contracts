@@ -1225,7 +1225,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             const ctx = await loadFixture(proTokenPlusFixture);
             await expect(
                 ctx.strategyVault.connect(ctx.accounts.user1).claimGrowth(ctx.accounts.user1.address, 0n),
-            ).to.be.revertedWithCustomError(ctx.strategyVault, "NotAdmin");
+            ).to.be.revertedWithCustomError(ctx.strategyVault, "NotAdminOrOperator");
         });
     });
 
