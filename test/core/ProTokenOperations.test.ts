@@ -15,7 +15,7 @@ import {
     ERRORS,
     EVENTS,
 } from "../helpers/constants";
-import { fullProtocolFixture } from "../helpers/fixtures";
+import { fullProtocolFixture, FullProtocolFixture } from "../helpers/fixtures";
 import {
     deployMintableERC20,
     deployYAssetOperationsHandler,
@@ -40,11 +40,37 @@ import {
 //     100e18 in initialize; enforced at request creation. minimumUnmintAmount
 //     (InsufficientUnmintAmount) is gone, replaced by BelowMinWithdraw.
 //   - New strategist paths: strategicMint / strategicUnmint (onlyStrategyVault).
+//   - INSTANT/QUEUED UNMINT BRANCHING: both finalizeUnmintRequest (user) and
+//     strategicUnmint branch on YAssetOperationsHandler.previewPayOut(amount).
+//     If sufficient liquidity exists, the payout happens in-tx and the
+//     ProTokenUnmintInstant / StrategicUnmintInstant event fires. Otherwise the
+//     request is queued in ProTokenUnmintHandler (ProTokenUnmintQueued /
+//     StrategicUnmintQueued event).
 //
 // NOTE on amounts: HUNDRED_TOKENS == 100e18 sits exactly at the 100e18 base
 // floor, so a 1:1-priced 18-dec yAsset deposit of HUNDRED_TOKENS passes
 // (>= 100). Sub-floor amounts revert BelowMinDeposit / BelowMinWithdraw.
+//
+// NOTE on default fixture: no yield protocol handlers are configured, so yAsset
+// transferred into YAssetOperationsHandler stays unallocated. previewPayOut
+// therefore returns true for amounts up to that pool and unmints route to the
+// INSTANT branch by default. Tests that want the QUEUED branch first drain the
+// unallocated balance via drainYAssetOps().
 // ---------------------------------------------------------------------------
+
+/**
+ * Drain all unallocated yAsset from YAssetOperationsHandler. With no yield
+ * protocol handlers in the default fixture, this empties the pool previewPayOut
+ * reads from, so the next unmint cannot be paid instantly and falls through to
+ * the QUEUED branch (which creates a request in ProTokenUnmintHandler).
+ */
+async function drainYAssetOps(ctx: FullProtocolFixture) {
+    const balance = await ctx.yAsset.balanceOf(ctx.yAssetOperationsHandlerAddress);
+    if (balance === 0n) return;
+    await ctx.yAssetOperationsHandler
+        .connect(ctx.accounts.admin)
+        .withdrawalYieldAssets(ZERO_ADDRESS, balance);
+}
 
 describe("ProTokenOperations", function () {
     // =======================================================================
@@ -836,6 +862,11 @@ describe("ProTokenOperations", function () {
 
     // =======================================================================
     // finalizeUnmintRequest
+    //
+    // The branching (instant vs queued) lives inside _executeUnmint after the
+    // proUSD burn. The default fixture has no yield protocol handlers, so yAsset
+    // sits unallocated on yOps and previewPayOut returns true → INSTANT path.
+    // Queued-path tests below first drain yOps via drainYAssetOps().
     // =======================================================================
     describe("finalizeUnmintRequest()", function () {
         async function setupPendingUnmintRequest() {
@@ -894,7 +925,7 @@ describe("ProTokenOperations", function () {
             return { ...ctx, proTokenAmount, unmintProofData };
         }
 
-        it("APPROVE: burns proTokens and routes to unmint handler", async function () {
+        it("APPROVE: burns proTokens and marks request EXECUTED", async function () {
             const ctx = await loadFixture(setupPendingUnmintRequest);
             const proof = await signUnmintProof(
                 ctx.accounts.authority,
@@ -911,6 +942,7 @@ describe("ProTokenOperations", function () {
                 .connect(ctx.accounts.user1)
                 .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_APPROVE, proof);
 
+            // proUSD burn happens on BOTH branches (instant + queued).
             expect(await ctx.proToken.totalSupply()).to.equal(
                 supplyBefore - ctx.proTokenAmount
             );
@@ -922,13 +954,16 @@ describe("ProTokenOperations", function () {
             expect(req.status).to.equal(2n); // EXECUTED
         });
 
-        it("APPROVE: emits UnmintRequestFinalized and ProTokenUnmint events", async function () {
+        it("APPROVE (instant): pays yAsset directly to recipient, emits ProTokenUnmintInstant", async function () {
             const ctx = await loadFixture(setupPendingUnmintRequest);
             const proof = await signUnmintProof(
                 ctx.accounts.authority,
                 ctx.proTokenOperationsAddress,
                 ctx.unmintProofData
             );
+
+            // No drain → yOps has the minted yAsset → instant path.
+            const recipientBefore = await ctx.yAsset.balanceOf(ctx.accounts.user1.address);
 
             const tx = ctx.proTokenOperations
                 .connect(ctx.accounts.user1)
@@ -938,7 +973,107 @@ describe("ProTokenOperations", function () {
                 ctx.proTokenOperations,
                 EVENTS.UnmintRequestFinalized
             );
-            await expect(tx).to.emit(ctx.proTokenOperations, EVENTS.ProTokenUnmint);
+            await expect(tx).to.emit(
+                ctx.proTokenOperations,
+                EVENTS.ProTokenUnmintInstant
+            );
+
+            // Recipient received yAsset directly.
+            expect(
+                await ctx.yAsset.balanceOf(ctx.accounts.user1.address),
+            ).to.be.gt(recipientBefore);
+
+            // No batch created on the unmint handler.
+            expect(
+                await ctx.proTokenUnmintHandler.getCurrentUnmintBatchId(ctx.yAssetAddress),
+            ).to.equal(0n);
+        });
+
+        it("APPROVE (queued): queues request in unmint handler, emits ProTokenUnmintQueued", async function () {
+            const ctx = await loadFixture(setupPendingUnmintRequest);
+            const proof = await signUnmintProof(
+                ctx.accounts.authority,
+                ctx.proTokenOperationsAddress,
+                ctx.unmintProofData
+            );
+
+            // Drain → previewPayOut returns false → queued path.
+            await drainYAssetOps(ctx);
+
+            const recipientBefore = await ctx.yAsset.balanceOf(ctx.accounts.user1.address);
+
+            const tx = ctx.proTokenOperations
+                .connect(ctx.accounts.user1)
+                .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_APPROVE, proof);
+
+            await expect(tx).to.emit(
+                ctx.proTokenOperations,
+                EVENTS.UnmintRequestFinalized
+            );
+            await expect(tx).to.emit(
+                ctx.proTokenOperations,
+                EVENTS.ProTokenUnmintQueued
+            );
+            // The handler emits its own UnmintRequestCreated event inside the same tx.
+            await expect(tx).to.emit(
+                ctx.proTokenUnmintHandler,
+                EVENTS.UnmintRequestCreated
+            );
+
+            // Recipient did NOT receive yAsset yet — it's queued.
+            expect(
+                await ctx.yAsset.balanceOf(ctx.accounts.user1.address),
+            ).to.equal(recipientBefore);
+
+            // Handler now has a pending batch.
+            expect(
+                await ctx.proTokenUnmintHandler.getCurrentUnmintBatchId(ctx.yAssetAddress),
+            ).to.equal(1n);
+
+            const batch = await ctx.proTokenUnmintHandler.getUnmintBatch(
+                ctx.yAssetAddress,
+                1n,
+            );
+            expect(batch.totalAmount).to.be.gt(0n);
+            expect(batch.processed).to.equal(false);
+        });
+
+        it("APPROVE (queued): emitted handlerRequestId matches the handler's view", async function () {
+            const ctx = await loadFixture(setupPendingUnmintRequest);
+            const proof = await signUnmintProof(
+                ctx.accounts.authority,
+                ctx.proTokenOperationsAddress,
+                ctx.unmintProofData
+            );
+
+            await drainYAssetOps(ctx);
+
+            const tx = await ctx.proTokenOperations
+                .connect(ctx.accounts.user1)
+                .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_APPROVE, proof);
+            const receipt = await tx.wait();
+
+            const queuedEvent = receipt!.logs
+                .map((l) => {
+                    try {
+                        return ctx.proTokenOperations.interface.parseLog(l as never);
+                    } catch {
+                        return null;
+                    }
+                })
+                .find((e) => e?.name === EVENTS.ProTokenUnmintQueued);
+            expect(queuedEvent).to.not.be.undefined;
+
+            const emittedHandlerRequestId =
+                queuedEvent!.args.handlerRequestId as bigint;
+            const viewHandlerRequestId =
+                await ctx.proTokenUnmintHandler.getUnmintRequestIdForReceiverInBatch(
+                    ctx.yAssetAddress,
+                    1n,
+                    ctx.accounts.user1.address,
+                );
+
+            expect(emittedHandlerRequestId).to.equal(viewHandlerRequestId);
         });
 
         it("RETURN: transfers proTokens back to user", async function () {
@@ -1157,8 +1292,9 @@ describe("ProTokenOperations", function () {
     // strategicMint / strategicUnmint (onlyStrategyVault)
     //
     // These are privileged paths callable only by the configured StrategyVault.
-    // The fixture is expected to expose a `strategyVaultSigner` (an impersonated
-    // or EOA account registered via Settings.setStrategyVault) to drive them.
+    // strategicUnmint also branches instant/queued via previewPayOut, mirroring
+    // the user finalizeUnmintRequest path but without proof verification or the
+    // minWithdrawBase floor.
     // =======================================================================
     describe("strategicMint() / strategicUnmint()", function () {
         it("strategicMint reverts for a non-vault caller", async function () {
@@ -1239,11 +1375,11 @@ describe("ProTokenOperations", function () {
             expect(minted).to.be.gt(0n);
         });
 
-        it("strategicUnmint: burns the vault's proUSD and pays yAsset to the destination", async function () {
+        it("strategicUnmint (instant): burns vault's proUSD and pays yAsset to destination, emits StrategicUnmintInstant", async function () {
             const ctx = await loadFixture(fullProtocolFixture);
             const vault = ctx.accounts.strategyVault;
 
-            // First strategicMint so the vault holds proUSD and the handler holds yAsset.
+            // strategicMint so the vault holds proUSD and the handler holds yAsset (instant available).
             await ctx.yAsset.mint(vault.address, HUNDRED_TOKENS);
             await ctx.yAsset
                 .connect(vault)
@@ -1261,11 +1397,147 @@ describe("ProTokenOperations", function () {
                 ctx.proTokenOperations
                     .connect(vault)
                     .strategicUnmint(ctx.yAssetAddress, vaultPro, dest)
-            ).to.emit(ctx.proTokenOperations, EVENTS.StrategicUnmint);
+            ).to.emit(ctx.proTokenOperations, EVENTS.StrategicUnmintInstant);
 
             // proUSD burned from the vault; yAsset delivered to destination.
             expect(await ctx.proToken.totalSupply()).to.equal(supplyBefore - vaultPro);
             expect(await ctx.yAsset.balanceOf(dest)).to.be.gt(destBefore);
+
+            // No handler batch created — instant path.
+            expect(
+                await ctx.proTokenUnmintHandler.getCurrentUnmintBatchId(ctx.yAssetAddress),
+            ).to.equal(0n);
+        });
+
+        it("strategicUnmint (queued): burns vault's proUSD and queues request, emits StrategicUnmintQueued", async function () {
+            const ctx = await loadFixture(fullProtocolFixture);
+            const vault = ctx.accounts.strategyVault;
+
+            // strategicMint to seed vault with proUSD.
+            await ctx.yAsset.mint(vault.address, HUNDRED_TOKENS);
+            await ctx.yAsset
+                .connect(vault)
+                .approve(ctx.proTokenOperationsAddress, HUNDRED_TOKENS);
+            await ctx.proTokenOperations
+                .connect(vault)
+                .strategicMint(HUNDRED_TOKENS, ctx.yAssetAddress);
+
+            // Drain yOps so previewPayOut returns false → queued.
+            await drainYAssetOps(ctx);
+
+            const vaultPro = await ctx.proToken.balanceOf(vault.address);
+            const dest = ctx.accounts.user1.address;
+            const destBefore = await ctx.yAsset.balanceOf(dest);
+            const supplyBefore = await ctx.proToken.totalSupply();
+
+            const tx = ctx.proTokenOperations
+                .connect(vault)
+                .strategicUnmint(ctx.yAssetAddress, vaultPro, dest);
+
+            await expect(tx).to.emit(
+                ctx.proTokenOperations,
+                EVENTS.StrategicUnmintQueued
+            );
+            await expect(tx).to.emit(
+                ctx.proTokenUnmintHandler,
+                EVENTS.UnmintRequestCreated
+            );
+
+            // proUSD burned regardless of path.
+            expect(await ctx.proToken.totalSupply()).to.equal(supplyBefore - vaultPro);
+            // destination did NOT receive yAsset yet.
+            expect(await ctx.yAsset.balanceOf(dest)).to.equal(destBefore);
+
+            // Handler batch exists for the destination.
+            expect(
+                await ctx.proTokenUnmintHandler.getCurrentUnmintBatchId(ctx.yAssetAddress),
+            ).to.equal(1n);
+            const requestId =
+                await ctx.proTokenUnmintHandler.getUnmintRequestIdForReceiverInBatch(
+                    ctx.yAssetAddress,
+                    1n,
+                    dest,
+                );
+            // The first queued request in a fresh fixture has id 0 — don't assert
+            // requestId > 0. Confirm the request exists by reading the struct and
+            // checking the receiver matches.
+            const req = await ctx.proTokenUnmintHandler.getUnmintRequest(
+                ctx.yAssetAddress,
+                requestId,
+            );
+            expect(req.receiver).to.equal(dest);
+            expect(req.totalAmount).to.be.gt(0n);
+        });
+
+        it("strategicUnmint (queued): emitted handlerRequestId matches the handler's view", async function () {
+            const ctx = await loadFixture(fullProtocolFixture);
+            const vault = ctx.accounts.strategyVault;
+
+            await ctx.yAsset.mint(vault.address, HUNDRED_TOKENS);
+            await ctx.yAsset
+                .connect(vault)
+                .approve(ctx.proTokenOperationsAddress, HUNDRED_TOKENS);
+            await ctx.proTokenOperations
+                .connect(vault)
+                .strategicMint(HUNDRED_TOKENS, ctx.yAssetAddress);
+
+            await drainYAssetOps(ctx);
+
+            const vaultPro = await ctx.proToken.balanceOf(vault.address);
+            const dest = ctx.accounts.user1.address;
+
+            const tx = await ctx.proTokenOperations
+                .connect(vault)
+                .strategicUnmint(ctx.yAssetAddress, vaultPro, dest);
+            const receipt = await tx.wait();
+
+            const queuedEvent = receipt!.logs
+                .map((l) => {
+                    try {
+                        return ctx.proTokenOperations.interface.parseLog(l as never);
+                    } catch {
+                        return null;
+                    }
+                })
+                .find((e) => e?.name === EVENTS.StrategicUnmintQueued);
+            expect(queuedEvent).to.not.be.undefined;
+
+            const emittedHandlerRequestId =
+                queuedEvent!.args.handlerRequestId as bigint;
+            const viewHandlerRequestId =
+                await ctx.proTokenUnmintHandler.getUnmintRequestIdForReceiverInBatch(
+                    ctx.yAssetAddress,
+                    1n,
+                    dest,
+                );
+
+            expect(emittedHandlerRequestId).to.equal(viewHandlerRequestId);
+        });
+
+        it("strategicUnmint: no minWithdrawBase floor (sub-floor amount succeeds where user path would revert)", async function () {
+            // The user path enforces minWithdrawBase at createUnmintRequest; strategicUnmint
+            // intentionally skips it because the vault is privileged. This test exercises
+            // that asymmetry: a 1-wei strategist unmint succeeds end-to-end (instant path
+            // with sufficient yOps liquidity), while the same amount from a user would
+            // revert with BelowMinWithdraw at request creation.
+            const ctx = await loadFixture(fullProtocolFixture);
+            const vault = ctx.accounts.strategyVault;
+
+            // Seed: vault has proUSD, handler has yAsset (instant available).
+            await ctx.yAsset.mint(vault.address, HUNDRED_TOKENS);
+            await ctx.yAsset
+                .connect(vault)
+                .approve(ctx.proTokenOperationsAddress, HUNDRED_TOKENS);
+            await ctx.proTokenOperations
+                .connect(vault)
+                .strategicMint(HUNDRED_TOKENS, ctx.yAssetAddress);
+
+            // 1 wei is far below the 100e18 floor — no revert from strategist path.
+            await expect(
+                ctx.proTokenOperations
+                    .connect(vault)
+                    .strategicUnmint(ctx.yAssetAddress, 1n, ctx.accounts.user1.address)
+            ).to.not.be.reverted;
         });
 
         it("strategicUnmint reverts on zero destination", async function () {

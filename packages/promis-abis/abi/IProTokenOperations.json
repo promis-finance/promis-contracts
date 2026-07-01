@@ -406,7 +406,7 @@
       {
         "indexed": true,
         "internalType": "address",
-        "name": "receiver",
+        "name": "recipient",
         "type": "address"
       },
       {
@@ -424,11 +424,54 @@
       {
         "indexed": false,
         "internalType": "uint256",
-        "name": "unmintYAssetAmount",
+        "name": "yAssetAmount",
         "type": "uint256"
       }
     ],
-    "name": "ProTokenUnmint",
+    "name": "ProTokenUnmintInstant",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "sender",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "recipient",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "yAsset",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "proTokenAmount",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "yAssetQueued",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "handlerRequestId",
+        "type": "uint256"
+      }
+    ],
+    "name": "ProTokenUnmintQueued",
     "type": "event"
   },
   {
@@ -502,7 +545,50 @@
         "type": "uint256"
       }
     ],
-    "name": "StrategicUnmint",
+    "name": "StrategicUnmintInstant",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "vault",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "yAsset",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "destination",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "proUSDBurned",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "yAssetQueued",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "handlerRequestId",
+        "type": "uint256"
+      }
+    ],
+    "name": "StrategicUnmintQueued",
     "type": "event"
   },
   {

@@ -403,20 +403,35 @@ contract ProTokenOperations is
         if (yAssetToReceiveAmount < _minAmountOut)
             revert InsufficientAmountOut(yAssetToReceiveAmount, _minAmountOut);
 
-        emit ProTokenUnmint(
-            _sender,
-            _recipient,
-            _yAsset,
-            _amount,
-            yAssetToReceiveAmount
-        );
-
         // burn the pro tokens from the user
         IProToken(proTokenInfo.proToken).burn(address(this), _amount);
 
-        //the actual unminting logic is handled by the unmint handler contract
-        IProTokenUnmintHandler(proTokenInfo.proTokenUnmintHandler)
-            .createUnmintRequest(_recipient, _yAsset, yAssetToReceiveAmount);
+        // Branch: instant payout if liquidity allows, otherwise queue in UnmintHandler
+        IYAssetOperationsHandler yOps =
+            IYAssetOperationsHandler(yAssetSettings.settings.yOperationsHandler);
+
+        if (yOps.previewPayOut(yAssetToReceiveAmount)) {
+            yOps.payOut(_recipient, yAssetToReceiveAmount);
+            emit ProTokenUnmintInstant(
+                _sender,
+                _recipient,
+                _yAsset,
+                _amount,
+                yAssetToReceiveAmount
+            );
+        } else {
+            uint256 handlerRequestId = IProTokenUnmintHandler(
+                proTokenInfo.proTokenUnmintHandler
+            ).createUnmintRequest(_recipient, _yAsset, yAssetToReceiveAmount);
+            emit ProTokenUnmintQueued(
+                _sender,
+                _recipient,
+                _yAsset,
+                _amount,
+                yAssetToReceiveAmount,
+                handlerRequestId
+            );
+        }
 
         return yAssetToReceiveAmount;
     }
@@ -521,19 +536,36 @@ contract ProTokenOperations is
             proTokenInfo.priceSettings
         );
 
-        // Burn the vault's proUSD, then send yAsset straight to the destination,
-        // pulling from yield handlers on a shortfall. No batching, no unbonding.
+        // Burn the vault's proUSD. yAsset is paid out instantly if liquidity allows, 
+        // otherwise queued in the unmint handler for later claim by the destination.
         IProToken(proTokenInfo.proToken).burn(msg.sender, _proUSDAmount);
-        IYAssetOperationsHandler(yAssetSettings.settings.yOperationsHandler)
-            .payOut(_destination, yAssetReceived);
 
-        emit StrategicUnmint(
-            msg.sender, 
-            _yAsset, 
-            _destination, 
-            _proUSDAmount, 
-            yAssetReceived
-        );
+        // Branch: instant payout if handlers can cover it, otherwise queue
+        IYAssetOperationsHandler yOps =
+            IYAssetOperationsHandler(yAssetSettings.settings.yOperationsHandler);
+
+        if (yOps.previewPayOut(yAssetReceived)) {
+            yOps.payOut(_destination, yAssetReceived);
+            emit StrategicUnmintInstant(
+                msg.sender,
+                _yAsset,
+                _destination,
+                _proUSDAmount,
+                yAssetReceived
+            );
+        } else {
+            uint256 handlerRequestId = IProTokenUnmintHandler(
+                proTokenInfo.proTokenUnmintHandler
+            ).createUnmintRequest(_destination, _yAsset, yAssetReceived);
+            emit StrategicUnmintQueued(
+                msg.sender,
+                _yAsset,
+                _destination,
+                _proUSDAmount,
+                yAssetReceived,
+                handlerRequestId
+            );
+        }
     }
 
     // ================================================

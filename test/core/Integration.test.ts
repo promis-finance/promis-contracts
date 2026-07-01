@@ -39,6 +39,19 @@ import { deployMockYieldProtocolHandler } from "../helpers/mocks";
 // Key invariants tracked:
 //   - proToken total supply == sum of holder balances + Operations balance
 //   - yAsset conservation across mint → unmint → claim flow
+//
+// INSTANT vs QUEUED UNMINT BRANCHING:
+// ProTokenOperations._executeUnmint branches on YAssetOperationsHandler.
+// previewPayOut(amount). When liquidity (unallocated + yield handler balances)
+// covers the request, the unmint pays out in-tx (instant). Otherwise it queues
+// in ProTokenUnmintHandler for the operator to process.
+//
+// Tests that demonstrate the operator's batch flow first DRAIN available
+// liquidity (representing the steady-state of yOps being underprovisioned
+// because most funds are deployed elsewhere), forcing the queued branch.
+// The drained funds end up in the operator's wallet — which is also what
+// they need to fund the batch — so the drain step doubles as operator
+// liquidity pre-positioning.
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -98,6 +111,15 @@ async function mintProTokensFor(
     return ctx.proToken.balanceOf(user.address);
 }
 
+/**
+ * Walk a user through createUnmintRequest → finalizeUnmintRequest(APPROVE).
+ * Returns the Operations-side request id AND the corresponding handler request id.
+ *
+ * Caller must ensure the QUEUED branch will run (typically by draining yOps
+ * liquidity first) — the helper looks up the handler request id via the batch
+ * mapping, which only exists on the queued path. For instant-path coverage,
+ * inline the call sites instead.
+ */
 async function createAndApproveUnmint(
     ctx: FullProtocolFixture,
     user: HardhatEthersSigner,
@@ -167,7 +189,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
             return ctx;
         }
 
-        it("mints proTokens, unmints them, claims yAsset — round trip restores balance", async function () {
+        it("queued unmint: mints, queues unmint, operator processes batch, claims yAsset", async function () {
             const ctx = await loadFixture(setup);
             const alice = ctx.accounts.user1;
 
@@ -188,7 +210,24 @@ describe("Integration: ProToken protocol end-to-end", function () {
                 await ctx.yAssetOperationsHandler.getUnallocatedBalance(),
             ).to.equal(HUNDRED_TOKENS);
 
-            // ---- Step 2: Alice unmints all 100 proToken ----
+            // ---- Step 2: Operator pre-pulls liquidity ----
+            // Forces the queued branch on Alice's unmint by ensuring yOps cannot
+            // pay it instantly. In production this drained amount represents
+            // funds that would normally be deployed in yield strategies; here
+            // the admin simply holds them until they fund Alice's batch below.
+            await ctx.yAssetOperationsHandler
+                .connect(ctx.accounts.admin)
+                .withdrawalYieldAssets(ZERO_ADDRESS, HUNDRED_TOKENS);
+
+            // yOps drained, admin holds the funds.
+            expect(
+                await ctx.yAssetOperationsHandler.getUnallocatedBalance(),
+            ).to.equal(0n);
+            expect(
+                await ctx.yAsset.balanceOf(ctx.accounts.admin.address),
+            ).to.equal(HUNDRED_TOKENS);
+
+            // ---- Step 3: Alice unmints all 100 proToken ----
             const { handlerRequestId } = await createAndApproveUnmint(
                 ctx,
                 alice,
@@ -199,7 +238,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
             expect(await ctx.proToken.balanceOf(alice.address)).to.equal(0n);
             expect(await ctx.proToken.totalSupply()).to.equal(0n);
 
-            // Batch created in unmint handler
+            // Batch created in unmint handler — queued branch ran.
             const batchId = await ctx.proTokenUnmintHandler.getCurrentUnmintBatchId(
                 ctx.yAssetAddress,
             );
@@ -212,27 +251,13 @@ describe("Integration: ProToken protocol end-to-end", function () {
             expect(batch.totalAmount).to.equal(HUNDRED_TOKENS);
             expect(batch.processed).to.equal(false);
 
-            // ---- Step 3: Time passes, batch becomes processable ----
+            // ---- Step 4: Time passes, batch becomes processable ----
             const duration = await ctx.proTokenUnmintHandler.getUnmintBatchDuration();
             await time.increase(Number(duration) + 1);
 
-            // ---- Step 4a: Operator pulls yAsset from YAssetOpsHandler ----
-            // The operator sources the redemption funds from the protocol's unallocated
-            // pool (passing ZERO_ADDRESS as the handler arg means "pull from unallocated
-            // balance" rather than from a specific yield protocol handler).
-            await ctx.yAssetOperationsHandler
-                .connect(ctx.accounts.admin)
-                .withdrawalYieldAssets(ZERO_ADDRESS, batch.totalAmount);
-
-            // OpsHandler drained, operator now holds the funds
-            expect(
-                await ctx.yAssetOperationsHandler.getUnallocatedBalance(),
-            ).to.equal(0n);
-            expect(
-                await ctx.yAsset.balanceOf(ctx.accounts.admin.address),
-            ).to.equal(batch.totalAmount);
-
-            // ---- Step 4b: Operator funds the unmint batch ----
+            // ---- Step 5: Operator funds the unmint batch ----
+            // Admin uses the funds pulled in Step 2 (no second withdrawal needed —
+            // they're already holding the yAsset.)
             await ctx.yAsset
                 .connect(ctx.accounts.admin)
                 .approve(ctx.proTokenUnmintHandlerAddress, batch.totalAmount);
@@ -240,7 +265,8 @@ describe("Integration: ProToken protocol end-to-end", function () {
                 .connect(ctx.accounts.admin)
                 .processNextUnmintBatch(ctx.yAssetAddress);
 
-            // Batch marked processed; UnmintHandler now holds the redemption pool
+            // Batch marked processed; UnmintHandler now holds the redemption pool.
+            // Admin's wallet drained back to zero by the batch funding.
             const processedBatch = await ctx.proTokenUnmintHandler.getUnmintBatch(
                 ctx.yAssetAddress,
                 batchId,
@@ -249,8 +275,11 @@ describe("Integration: ProToken protocol end-to-end", function () {
             expect(
                 await ctx.yAsset.balanceOf(ctx.proTokenUnmintHandlerAddress),
             ).to.equal(HUNDRED_TOKENS);
+            expect(
+                await ctx.yAsset.balanceOf(ctx.accounts.admin.address),
+            ).to.equal(0n);
 
-            // ---- Step 5: Alice claims her yAsset ----
+            // ---- Step 6: Alice claims her yAsset ----
             await ctx.proTokenUnmintHandler
                 .connect(alice)
                 .claimUnmintRequests(ctx.yAssetAddress, [handlerRequestId]);
@@ -270,6 +299,71 @@ describe("Integration: ProToken protocol end-to-end", function () {
                     handlerRequestId,
                 ),
             ).to.equal(true);
+        });
+
+        it("instant unmint: mints, unmints with sufficient yOps liquidity, receives yAsset in same tx", async function () {
+            const ctx = await loadFixture(setup);
+            const alice = ctx.accounts.user1;
+
+            // ---- Step 1: Alice mints. yAsset stays unallocated on yOps. ----
+            const aliceYBalBefore = await ctx.yAsset.balanceOf(alice.address);
+            await mintProTokensFor(ctx, alice, HUNDRED_TOKENS);
+            expect(
+                await ctx.yAssetOperationsHandler.getUnallocatedBalance(),
+            ).to.equal(HUNDRED_TOKENS);
+
+            // ---- Step 2: Alice unmints, no drain → previewPayOut returns true → INSTANT ----
+            await ctx.proToken
+                .connect(alice)
+                .approve(ctx.proTokenOperationsAddress, HUNDRED_TOKENS);
+            const createTx = await ctx.proTokenOperations
+                .connect(alice)
+                .createUnmintRequest(ctx.yAssetAddress, HUNDRED_TOKENS, 0n, ZERO_ADDRESS);
+            const opsRequestId = ((await createTx.wait())!.logs
+                .map((l) => {
+                    try {
+                        return ctx.proTokenOperations.interface.parseLog(l as never);
+                    } catch {
+                        return null;
+                    }
+                })
+                .find((e) => e?.name === EVENTS.UnmintRequestCreated)!.args
+                .requestID) as bigint;
+            const proof = await signUnmintProof(
+                ctx.accounts.authority,
+                ctx.proTokenOperationsAddress,
+                {
+                    requestId: opsRequestId,
+                    user: alice.address,
+                    receiver: ZERO_ADDRESS,
+                    yAsset: ctx.yAssetAddress,
+                    amount: HUNDRED_TOKENS,
+                    minAmountOut: 0n,
+                    proofKind: ProofKind.PROOF_OF_APPROVE,
+                },
+            );
+
+            await expect(
+                ctx.proTokenOperations
+                    .connect(alice)
+                    .finalizeUnmintRequest(opsRequestId, ProofKind.PROOF_OF_APPROVE, proof),
+            ).to.emit(ctx.proTokenOperations, EVENTS.ProTokenUnmintInstant);
+
+            // Alice has her 100 yAsset back already — no batch, no claim step.
+            expect(await ctx.yAsset.balanceOf(alice.address)).to.equal(
+                aliceYBalBefore + HUNDRED_TOKENS,
+            );
+            // proToken burned
+            expect(await ctx.proToken.balanceOf(alice.address)).to.equal(0n);
+            expect(await ctx.proToken.totalSupply()).to.equal(0n);
+            // yOps drained by the instant payout
+            expect(
+                await ctx.yAssetOperationsHandler.getUnallocatedBalance(),
+            ).to.equal(0n);
+            // No batch created on the unmint handler
+            expect(
+                await ctx.proTokenUnmintHandler.getCurrentUnmintBatchId(ctx.yAssetAddress),
+            ).to.equal(0n);
         });
 
         it("PROOF_OF_RETURN on mint refunds yAsset without minting proToken", async function () {
@@ -369,7 +463,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
             expect(await ctx.proToken.balanceOf(alice.address)).to.equal(HUNDRED_TOKENS);
             expect(await ctx.proToken.totalSupply()).to.equal(HUNDRED_TOKENS);
 
-            // No batch created in unmint handler
+            // No batch created in unmint handler (RETURN path skips the burn+queue entirely)
             expect(
                 await ctx.proTokenUnmintHandler.getCurrentUnmintBatchId(ctx.yAssetAddress),
             ).to.equal(0n);
@@ -392,14 +486,27 @@ describe("Integration: ProToken protocol end-to-end", function () {
             const bob = ctx.accounts.user2;
             const carol = ctx.accounts.externalBusiness;
 
-            // All three mint
+            // All three mint — total 600 yAsset on yOps unallocated.
             await mintProTokensFor(ctx, alice, HUNDRED_TOKENS);
             await mintProTokensFor(ctx, bob, HUNDRED_TOKENS * 2n);
             await mintProTokensFor(ctx, carol, HUNDRED_TOKENS * 3n);
 
             expect(await ctx.proToken.totalSupply()).to.equal(HUNDRED_TOKENS * 6n);
+            expect(
+                await ctx.yAssetOperationsHandler.getUnallocatedBalance(),
+            ).to.equal(HUNDRED_TOKENS * 6n);
 
-            // Alice and Bob unmint in the same batch
+            // Operator pre-pulls all liquidity from yOps — represents funds
+            // being deployed elsewhere. This forces queued routing for Alice
+            // and Bob's unmints and pre-funds the operator for batch processing.
+            await ctx.yAssetOperationsHandler
+                .connect(ctx.accounts.admin)
+                .withdrawalYieldAssets(ZERO_ADDRESS, HUNDRED_TOKENS * 6n);
+            expect(
+                await ctx.yAssetOperationsHandler.getUnallocatedBalance(),
+            ).to.equal(0n);
+
+            // Alice and Bob unmint in the same batch (queued)
             const { handlerRequestId: aliceReqId } = await createAndApproveUnmint(
                 ctx,
                 alice,
@@ -437,12 +544,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
             const duration = await ctx.proTokenUnmintHandler.getUnmintBatchDuration();
             await time.increase(Number(duration) + 1);
 
-            // Operator pulls batch funds from YAssetOpsHandler (manual step 1)
-            await ctx.yAssetOperationsHandler
-                .connect(ctx.accounts.admin)
-                .withdrawalYieldAssets(ZERO_ADDRESS, batch.totalAmount);
-
-            // Operator funds the unmint batch (manual step 2)
+            // Operator funds the batch from the pre-pulled liquidity.
             await ctx.yAsset
                 .connect(ctx.accounts.admin)
                 .approve(ctx.proTokenUnmintHandlerAddress, batch.totalAmount);
@@ -474,12 +576,13 @@ describe("Integration: ProToken protocol end-to-end", function () {
                 await ctx.yAsset.balanceOf(ctx.proTokenUnmintHandlerAddress),
             ).to.equal(0n);
 
-            // Carol still holds her proToken; her deposit still in OpsHandler
+            // Carol still holds her proToken; admin retains Carol's share of
+            // the pulled liquidity (300, since 300 was used for Alice+Bob's batch).
             expect(await ctx.proToken.balanceOf(carol.address)).to.equal(
                 HUNDRED_TOKENS * 3n,
             );
             expect(
-                await ctx.yAssetOperationsHandler.getUnallocatedBalance(),
+                await ctx.yAsset.balanceOf(ctx.accounts.admin.address),
             ).to.equal(HUNDRED_TOKENS * 3n);
         });
 
@@ -488,6 +591,11 @@ describe("Integration: ProToken protocol end-to-end", function () {
             const alice = ctx.accounts.user1;
 
             await mintProTokensFor(ctx, alice, HUNDRED_TOKENS * 2n);
+
+            // Pre-pull liquidity to force queued for both unmints.
+            await ctx.yAssetOperationsHandler
+                .connect(ctx.accounts.admin)
+                .withdrawalYieldAssets(ZERO_ADDRESS, HUNDRED_TOKENS * 2n);
 
             const { handlerRequestId: id1 } = await createAndApproveUnmint(
                 ctx,
@@ -514,10 +622,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
             const duration = await ctx.proTokenUnmintHandler.getUnmintBatchDuration();
             await time.increase(Number(duration) + 1);
 
-            // Operator pulls and processes
-            await ctx.yAssetOperationsHandler
-                .connect(ctx.accounts.admin)
-                .withdrawalYieldAssets(ZERO_ADDRESS, batch.totalAmount);
+            // Operator funds the batch from their pre-pulled liquidity.
             await ctx.yAsset
                 .connect(ctx.accounts.admin)
                 .approve(ctx.proTokenUnmintHandlerAddress, batch.totalAmount);
@@ -546,13 +651,13 @@ describe("Integration: ProToken protocol end-to-end", function () {
             return ctx;
         }
 
-        async function processBatch(ctx: FullProtocolFixture, amount: bigint) {
-            // Inline two-step operator flow:
-            // 1. Pull from YAssetOpsHandler unallocated pool
-            await ctx.yAssetOperationsHandler
-                .connect(ctx.accounts.admin)
-                .withdrawalYieldAssets(ZERO_ADDRESS, amount);
-            // 2. Approve and process the batch
+        /**
+         * Admin funds the next unmint batch using yAsset they're already holding.
+         * Caller must have pre-pulled liquidity (drained yOps) before the unmint
+         * that created this batch — both to force queued routing and to give the
+         * admin the funds they're now spending here.
+         */
+        async function fundAndProcessBatch(ctx: FullProtocolFixture, amount: bigint) {
             await ctx.yAsset
                 .connect(ctx.accounts.admin)
                 .approve(ctx.proTokenUnmintHandlerAddress, amount);
@@ -569,7 +674,12 @@ describe("Integration: ProToken protocol end-to-end", function () {
             await mintProTokensFor(ctx, alice, HUNDRED_TOKENS);
             await mintProTokensFor(ctx, bob, HUNDRED_TOKENS);
 
-            // Batch 1: Alice unmints
+            // Operator pre-pulls all liquidity. yOps now empty; admin holds 200.
+            await ctx.yAssetOperationsHandler
+                .connect(ctx.accounts.admin)
+                .withdrawalYieldAssets(ZERO_ADDRESS, HUNDRED_TOKENS * 2n);
+
+            // Batch 1: Alice unmints (queued)
             const { handlerRequestId: aliceReqId } = await createAndApproveUnmint(
                 ctx,
                 alice,
@@ -582,13 +692,13 @@ describe("Integration: ProToken protocol end-to-end", function () {
             // Advance and process batch 1
             const duration = await ctx.proTokenUnmintHandler.getUnmintBatchDuration();
             await time.increase(Number(duration) + 1);
-            await processBatch(ctx, HUNDRED_TOKENS);
+            await fundAndProcessBatch(ctx, HUNDRED_TOKENS);
 
             expect(
                 await ctx.proTokenUnmintHandler.getLastProcessedBatchId(ctx.yAssetAddress),
             ).to.equal(1n);
 
-            // Batch 2: Bob unmints
+            // Batch 2: Bob unmints. yOps is still empty from earlier drain → queued.
             const { handlerRequestId: bobReqId } = await createAndApproveUnmint(
                 ctx,
                 bob,
@@ -601,7 +711,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
             ).to.equal(2n);
 
             await time.increase(Number(duration) + 1);
-            await processBatch(ctx, HUNDRED_TOKENS);
+            await fundAndProcessBatch(ctx, HUNDRED_TOKENS);
 
             expect(
                 await ctx.proTokenUnmintHandler.getLastProcessedBatchId(ctx.yAssetAddress),
@@ -625,9 +735,13 @@ describe("Integration: ProToken protocol end-to-end", function () {
                 bobYBalBefore + HUNDRED_TOKENS,
             );
 
-            // OpsHandler emptied: both Alice and Bob's deposits used to fund their own unmints
+            // yOps still empty (drained at start, never refilled); admin's wallet
+            // also empty (both batches consumed the pre-pulled funds).
             expect(
                 await ctx.yAssetOperationsHandler.getUnallocatedBalance(),
+            ).to.equal(0n);
+            expect(
+                await ctx.yAsset.balanceOf(ctx.accounts.admin.address),
             ).to.equal(0n);
         });
 
@@ -636,6 +750,11 @@ describe("Integration: ProToken protocol end-to-end", function () {
             const alice = ctx.accounts.user1;
 
             await mintProTokensFor(ctx, alice, HUNDRED_TOKENS * 2n);
+
+            // Pre-pull both deposits so subsequent unmints queue.
+            await ctx.yAssetOperationsHandler
+                .connect(ctx.accounts.admin)
+                .withdrawalYieldAssets(ZERO_ADDRESS, HUNDRED_TOKENS * 2n);
 
             const duration = await ctx.proTokenUnmintHandler.getUnmintBatchDuration();
 
@@ -646,7 +765,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
                 HUNDRED_TOKENS,
             );
             await time.increase(Number(duration) + 1);
-            await processBatch(ctx, HUNDRED_TOKENS);
+            await fundAndProcessBatch(ctx, HUNDRED_TOKENS);
 
             // Batch 2
             const { handlerRequestId: req2 } = await createAndApproveUnmint(
@@ -655,7 +774,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
                 HUNDRED_TOKENS,
             );
             await time.increase(Number(duration) + 1);
-            await processBatch(ctx, HUNDRED_TOKENS);
+            await fundAndProcessBatch(ctx, HUNDRED_TOKENS);
 
             // Single claim covers both
             const aliceYBalBefore = await ctx.yAsset.balanceOf(alice.address);
@@ -706,38 +825,103 @@ describe("Integration: ProToken protocol end-to-end", function () {
             expect(total).to.equal(HUNDRED_TOKENS);
         });
 
-        it("operator withdraws from yield handler to fund an unmint batch", async function () {
+        it("instant unmint pulls from yield handler in one tx (no batch)", async function () {
             const ctx = await loadFixture(setupWithYieldHandler);
             const alice = ctx.accounts.user1;
 
-            // Alice mints — funds flow to yield handler
+            // Alice mints — funds flow to yield handler.
             await mintProTokensFor(ctx, alice, HUNDRED_TOKENS);
             expect(await ctx.yieldHandler.getBalance()).to.equal(HUNDRED_TOKENS);
 
-            // Alice creates unmint
-            const { handlerRequestId } = await createAndApproveUnmint(
-                ctx,
-                alice,
-                HUNDRED_TOKENS,
+            // Alice unmints inline — previewPayOut sums unallocated(0) + yield(100) = 100 ≥ 100 → INSTANT.
+            // payOut() internally calls withdrawYieldAsset on the yield handler to source funds.
+            const aliceYBalBefore = await ctx.yAsset.balanceOf(alice.address);
+
+            await ctx.proToken
+                .connect(alice)
+                .approve(ctx.proTokenOperationsAddress, HUNDRED_TOKENS);
+            const createTx = await ctx.proTokenOperations
+                .connect(alice)
+                .createUnmintRequest(ctx.yAssetAddress, HUNDRED_TOKENS, 0n, ZERO_ADDRESS);
+            const opsRequestId = ((await createTx.wait())!.logs
+                .map((l) => {
+                    try {
+                        return ctx.proTokenOperations.interface.parseLog(l as never);
+                    } catch {
+                        return null;
+                    }
+                })
+                .find((e) => e?.name === EVENTS.UnmintRequestCreated)!.args
+                .requestID) as bigint;
+            const proof = await signUnmintProof(
+                ctx.accounts.authority,
+                ctx.proTokenOperationsAddress,
+                {
+                    requestId: opsRequestId,
+                    user: alice.address,
+                    receiver: ZERO_ADDRESS,
+                    yAsset: ctx.yAssetAddress,
+                    amount: HUNDRED_TOKENS,
+                    minAmountOut: 0n,
+                    proofKind: ProofKind.PROOF_OF_APPROVE,
+                },
             );
 
-            // Advance past batch duration
-            const duration = await ctx.proTokenUnmintHandler.getUnmintBatchDuration();
-            await time.increase(Number(duration) + 1);
+            await expect(
+                ctx.proTokenOperations
+                    .connect(alice)
+                    .finalizeUnmintRequest(opsRequestId, ProofKind.PROOF_OF_APPROVE, proof),
+            ).to.emit(ctx.proTokenOperations, EVENTS.ProTokenUnmintInstant);
 
-            // Operator pulls funds from the specific yield handler (not the unallocated pool,
-            // because all funds are currently allocated to the yield handler)
+            // Alice has her funds.
+            expect(await ctx.yAsset.balanceOf(alice.address)).to.equal(
+                aliceYBalBefore + HUNDRED_TOKENS,
+            );
+            // Yield handler drained by payOut's withdraw call.
+            expect(await ctx.yieldHandler.getBalance()).to.equal(0n);
+            // No batch on the unmint handler.
+            expect(
+                await ctx.proTokenUnmintHandler.getCurrentUnmintBatchId(ctx.yAssetAddress),
+            ).to.equal(0n);
+        });
+
+        it("operator withdraws from yield handler to fund a queued unmint batch", async function () {
+            const ctx = await loadFixture(setupWithYieldHandler);
+            const alice = ctx.accounts.user1;
+
+            // Alice mints — funds flow to yield handler.
+            await mintProTokensFor(ctx, alice, HUNDRED_TOKENS);
+            expect(await ctx.yieldHandler.getBalance()).to.equal(HUNDRED_TOKENS);
+
+            // Operator pulls funds out of the yield handler. This both forces
+            // the queued branch on Alice's upcoming unmint (yield handler now
+            // empty, yOps unallocated already 0) AND pre-funds the operator
+            // for batch processing.
             await ctx.yAssetOperationsHandler
                 .connect(ctx.accounts.operator)
                 .withdrawalYieldAssets(ctx.yieldHandlerAddr, HUNDRED_TOKENS);
 
-            // Yield handler emptied; operator holds the funds
+            // Yield handler emptied; operator holds the funds.
             expect(await ctx.yieldHandler.getBalance()).to.equal(0n);
             expect(await ctx.yAsset.balanceOf(ctx.accounts.operator.address)).to.equal(
                 HUNDRED_TOKENS,
             );
 
-            // Operator funds the unmint batch
+            // Alice creates unmint (queued — nothing left to pay out).
+            const { handlerRequestId } = await createAndApproveUnmint(
+                ctx,
+                alice,
+                HUNDRED_TOKENS,
+            );
+            expect(
+                await ctx.proTokenUnmintHandler.getCurrentUnmintBatchId(ctx.yAssetAddress),
+            ).to.equal(1n);
+
+            // Advance past batch duration
+            const duration = await ctx.proTokenUnmintHandler.getUnmintBatchDuration();
+            await time.increase(Number(duration) + 1);
+
+            // Operator funds the batch from the funds they pulled earlier.
             await ctx.yAsset
                 .connect(ctx.accounts.operator)
                 .approve(ctx.proTokenUnmintHandlerAddress, HUNDRED_TOKENS);
@@ -753,6 +937,9 @@ describe("Integration: ProToken protocol end-to-end", function () {
             expect(await ctx.yAsset.balanceOf(alice.address)).to.equal(
                 aliceYBalBefore + HUNDRED_TOKENS,
             );
+
+            // Operator's wallet empty again — funds round-tripped through the batch.
+            expect(await ctx.yAsset.balanceOf(ctx.accounts.operator.address)).to.equal(0n);
         });
 
         it("multiple yield handlers split the allocation correctly", async function () {
@@ -884,7 +1071,9 @@ describe("Integration: ProToken protocol end-to-end", function () {
 
             expect(aliceBal + bobBal + carolBal + opsBal).to.equal(totalSupply);
 
-            // Stage 2: Alice creates unmint (proToken moves to Operations, then burns)
+            // Stage 2: Alice creates unmint. Either branch (instant or queued)
+            // burns aliceBal proTokens, so the supply invariant holds the same
+            // way regardless of which branch runs. We don't force a path here.
             await createAndApproveUnmint(ctx, alice, aliceBal);
 
             const newTotal = await ctx.proToken.totalSupply();
@@ -898,7 +1087,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
             expect(newTotal).to.equal(totalSupply - aliceBal);
         });
 
-        it("yAsset conservation: Alice's deposit funds Alice's unmint, Bob's deposit stays", async function () {
+        it("yAsset conservation (queued path): operator pre-pulls, Alice's batch is funded, Bob's portion stays with operator", async function () {
             const ctx = await loadFixture(setup);
             const alice = ctx.accounts.user1;
             const bob = ctx.accounts.user2;
@@ -910,43 +1099,37 @@ describe("Integration: ProToken protocol end-to-end", function () {
             await mintProTokensFor(ctx, alice, aliceDeposit);
             await mintProTokensFor(ctx, bob, bobDeposit);
 
-            // After mint: total deposits sit in YAssetOpsHandler unallocated pool
+            // After mint: total deposits sit in YAssetOpsHandler unallocated pool.
             expect(await ctx.yAssetOperationsHandler.getUnallocatedBalance()).to.equal(
                 totalDeposited,
             );
 
-            // Alice creates unmint request
+            // Operator pre-pulls everything (representing deployment to yield
+            // strategies). This is the "steady-state underprovisioning" that
+            // forces user unmints to queue.
+            await ctx.yAssetOperationsHandler
+                .connect(ctx.accounts.admin)
+                .withdrawalYieldAssets(ZERO_ADDRESS, totalDeposited);
+            expect(await ctx.yAssetOperationsHandler.getUnallocatedBalance()).to.equal(0n);
+            expect(await ctx.yAsset.balanceOf(ctx.accounts.admin.address)).to.equal(
+                totalDeposited,
+            );
+
+            // Alice creates unmint request — routes to queued.
             const { handlerRequestId: aliceReqId } = await createAndApproveUnmint(
                 ctx,
                 alice,
                 aliceDeposit,
             );
 
-            // OpsHandler balance unchanged at this point — unmint just burned proToken,
-            // yAsset hasn't moved yet
-            expect(await ctx.yAssetOperationsHandler.getUnallocatedBalance()).to.equal(
-                totalDeposited,
-            );
+            // yOps balance still 0 — unmint only burned proToken, didn't move yAsset.
+            expect(await ctx.yAssetOperationsHandler.getUnallocatedBalance()).to.equal(0n);
 
             // Advance time
             const duration = await ctx.proTokenUnmintHandler.getUnmintBatchDuration();
             await time.increase(Number(duration) + 1);
 
-            // Operator manual step 1: pull batch amount from OpsHandler
-            await ctx.yAssetOperationsHandler
-                .connect(ctx.accounts.admin)
-                .withdrawalYieldAssets(ZERO_ADDRESS, aliceDeposit);
-
-            // OpsHandler drained by Alice's amount
-            expect(await ctx.yAssetOperationsHandler.getUnallocatedBalance()).to.equal(
-                bobDeposit,
-            );
-            // Operator now holds Alice's amount
-            expect(await ctx.yAsset.balanceOf(ctx.accounts.admin.address)).to.equal(
-                aliceDeposit,
-            );
-
-            // Operator manual step 2: fund the batch
+            // Operator funds Alice's batch from their pre-pulled liquidity.
             await ctx.yAsset
                 .connect(ctx.accounts.admin)
                 .approve(ctx.proTokenUnmintHandlerAddress, aliceDeposit);
@@ -954,8 +1137,10 @@ describe("Integration: ProToken protocol end-to-end", function () {
                 .connect(ctx.accounts.admin)
                 .processNextUnmintBatch(ctx.yAssetAddress);
 
-            // Operator wallet empty again
-            expect(await ctx.yAsset.balanceOf(ctx.accounts.admin.address)).to.equal(0n);
+            // Operator's wallet now holds only Bob's portion — Alice's share was sent to UnmintHandler.
+            expect(await ctx.yAsset.balanceOf(ctx.accounts.admin.address)).to.equal(
+                bobDeposit,
+            );
 
             // Alice claims
             const aliceBefore = await ctx.yAsset.balanceOf(alice.address);
@@ -964,20 +1149,21 @@ describe("Integration: ProToken protocol end-to-end", function () {
                 .claimUnmintRequests(ctx.yAssetAddress, [aliceReqId]);
             const aliceAfter = await ctx.yAsset.balanceOf(alice.address);
 
-            // Alice got her deposit back
+            // Alice got her deposit back.
             expect(aliceAfter - aliceBefore).to.equal(aliceDeposit);
 
-            // Bob's deposit still sits in YAssetOpsHandler (he hasn't unminted)
-            expect(await ctx.yAssetOperationsHandler.getUnallocatedBalance()).to.equal(
-                bobDeposit,
-            );
-
-            // UnmintHandler emptied by Alice's claim
+            // Per-location state after the round trip:
+            //   yOps:          0  (drained at start, never refilled)
+            //   UnmintHandler: 0  (drained by Alice's claim)
+            //   Operator:      holds Bob's portion (would be re-deployed in production)
+            //   Bob:           still holds his proToken; no yAsset moved on his side
+            expect(await ctx.yAssetOperationsHandler.getUnallocatedBalance()).to.equal(0n);
             expect(
                 await ctx.yAsset.balanceOf(ctx.proTokenUnmintHandlerAddress),
             ).to.equal(0n);
-
-            // Bob still holds his proToken
+            expect(
+                await ctx.yAsset.balanceOf(ctx.accounts.admin.address),
+            ).to.equal(bobDeposit);
             expect(await ctx.proToken.balanceOf(bob.address)).to.equal(bobDeposit);
         });
     });

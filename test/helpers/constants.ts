@@ -260,7 +260,8 @@ export const EVENTS = {
 
     // ProTokenOperations
     ProTokenMint: "ProTokenMint",
-    ProTokenUnmint: "ProTokenUnmint",
+    ProTokenUnmintInstant: "ProTokenUnmintInstant",
+    ProTokenUnmintQueued: "ProTokenUnmintQueued",
     LSTRatioApplied: "LSTRatioApplied",
     PriceDeviationThresholdSet: "PriceDeviationThresholdSet",
     MintRequestCreated: "MintRequestCreated",
@@ -270,7 +271,8 @@ export const EVENTS = {
     MinDepositBaseSet: "MinDepositBaseSet",
     MinWithdrawBaseSet: "MinWithdrawBaseSet",
     StrategicMint: "StrategicMint",
-    StrategicUnmint: "StrategicUnmint",
+    StrategicUnmintInstant: "StrategicUnmintInstant",
+    StrategicUnmintQueued: "StrategicUnmintQueued",
 
     // ProTokenUnmintHandler
     UnmintRequestCreated: "UnmintRequestCreated",
