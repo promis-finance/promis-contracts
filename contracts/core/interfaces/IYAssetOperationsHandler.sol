@@ -79,6 +79,17 @@ interface IYAssetOperationsHandler {
     // ================================================
     // ================ View functions ================
     // ================================================
+    
+    /** 
+     * @notice Returns whether payOut(amount) would succeed at current state.
+     * @param amount Required amount to be withdrawn from handler
+     * @dev Sums unallocated + handler balances with early-exit. View-only; does not
+     *      account for slippage on actual withdrawYieldAsset() — handlers whose
+     *      withdraw returns less than getBalance() can still cause payOut to revert.
+     */
+    function previewPayOut(
+        uint256 amount
+    ) external view returns (bool sufficient);
 
     /**
      * @notice Returns the managed y asset and the total current amount.

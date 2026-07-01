@@ -344,6 +344,27 @@ contract YAssetOperationsHandler is
     // ================================================
 
     /// @inheritdoc IYAssetOperationsHandler
+    function previewPayOut(
+        uint256 amount
+    ) external view returns (bool sufficient) {
+        if (amount == 0) return true;
+
+        uint256 available = IERC20(yAsset).balanceOf(address(this));
+        if (available >= amount) return true;
+
+        uint256 len = protocolHandlers.length;
+        for (uint256 i = 0; i < len; ) {
+            address h = protocolHandlers[i].handlerContract;
+            if (h != address(0)) {
+                available += IYieldProtocolHandler(h).getBalance();
+                if (available >= amount) return true;
+            }
+            unchecked { ++i; }
+        }
+        return false;
+    }
+    
+    /// @inheritdoc IYAssetOperationsHandler
     function getYAssetInfo()
         external
         view

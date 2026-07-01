@@ -29,16 +29,33 @@ import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 // ---------------------------------------------------------------------------
 // ProTokenUnmintHandler — unit tests
 //
-// All requests reach the handler via ProTokenOperations.createUnmintRequest()
-// → finalizeUnmintRequest(APPROVE) which burns proTokens and calls
-// IProTokenUnmintHandler.createUnmintRequest on the handler.
+// Requests reach this handler via TWO entry points in ProTokenOperations, both
+// of which branch on yOps.previewPayOut(yAssetAmount):
+//   • USER path:       finalizeUnmintRequest(APPROVE) → _executeUnmint
+//                      (proof-verified; minWithdrawBase floor applies)
+//   • STRATEGIST path: strategicUnmint
+//                      (no proof; no floor; only StrategyVault may invoke)
+// When previewPayOut returns false (insufficient liquidity for an instant
+// payout), the branch creates a request here via createUnmintRequest(); when
+// it returns true the path pays out directly through YAssetOperationsHandler
+// and never touches this contract. Tests in this file cover the USER path only;
+// strategist-side branching lives next to the StrategyVault tests.
 //
-// Flow for one user redeeming yAsset:
-//   1. mint proTokens (createMintRequest + finalize APPROVE)
-//   2. create unmint request (createUnmintRequest + finalize APPROVE)
-//   3. fast-forward past unmintBatchDuration
-//   4. processNextUnmintBatch (admin/operator/externalBusiness pulls yAsset in)
-//   5. claimUnmintRequests (user receives their share)
+// BRANCHING NOTE (fixture):
+// With the default fixture there are no yield protocol handlers configured, so
+// all yAsset transferred in via distributeYAsset stays unallocated on
+// YAssetOperationsHandler. previewPayOut therefore returns true and every
+// unmint would route to the INSTANT path — bypassing this handler entirely.
+// To exercise the handler, tests below first DRAIN the unallocated balance
+// from YAssetOperationsHandler so the queued path runs.
+//
+// Flow for one user redeeming yAsset (queued path, which this contract handles):
+//   1. mint proTokens (createMintRequest + finalize APPROVE) — yAsset lands on yOps
+//   2. drain yOps so the next unmint cannot be paid instantly
+//   3. create unmint request (createUnmintRequest + finalize APPROVE) — queues here
+//   4. fast-forward past unmintBatchDuration
+//   5. processNextUnmintBatch (admin/operator/externalBusiness pulls yAsset in)
+//   6. claimUnmintRequests (user receives their share)
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -96,15 +113,37 @@ async function mintProTokensFor(
 }
 
 /**
+ * Force the queued unmint path by draining all unallocated yAsset from
+ * YAssetOperationsHandler. With no yield protocol handlers configured (default
+ * fixture), this empties the source of liquidity previewPayOut() reads from,
+ * so the next unmint cannot be paid instantly and falls through to this handler.
+ *
+ * No-op when there's nothing to drain.
+ */
+async function drainYAssetOps(ctx: FullProtocolFixture) {
+    const balance = await ctx.yAsset.balanceOf(ctx.yAssetOperationsHandlerAddress);
+    if (balance === 0n) return;
+    await ctx.yAssetOperationsHandler
+        .connect(ctx.accounts.admin)
+        .withdrawalYieldAssets(ZERO_ADDRESS, balance);
+}
+
+/**
  * Take a proToken-holding user through the async unmint flow up to (and including)
  * the handler's createUnmintRequest call. Returns the request id assigned by the
  * handler for that receiver in the current batch.
+ *
+ * Drains yOps liquidity first to guarantee the queued path runs — this helper
+ * exists for tests that operate on handler-side state and need the request to
+ * actually land here. For instant-path coverage see the "Branch routing" block.
  */
 async function createUnmintFor(
     ctx: FullProtocolFixture,
     user: HardhatEthersSigner,
     proTokenAmount: bigint,
 ): Promise<bigint> {
+    await drainYAssetOps(ctx);
+
     await ctx.proToken
         .connect(user)
         .approve(ctx.proTokenOperationsAddress, proTokenAmount);
@@ -266,7 +305,312 @@ describe("ProTokenUnmintHandler", function () {
     });
 
     // =======================================================================
-    // createUnmintRequest (called via ProTokenOperations)
+    // Branch routing (instant vs queued) — exercises ProTokenOperations'
+    // path selection. Included here because the queued path is what creates
+    // requests in this handler, so verifying the branching is part of the
+    // handler's surface contract.
+    // =======================================================================
+    describe("Branch routing (instant vs queued)", function () {
+        it("instant path: emits ProTokenUnmintInstant and does NOT create a batch", async function () {
+            const ctx = await loadFixture(fullProtocolFixture);
+            await authorizeBackend(ctx);
+
+            await mintProTokensFor(ctx, ctx.accounts.user1, HUNDRED_TOKENS);
+            const bal = await ctx.proToken.balanceOf(ctx.accounts.user1.address);
+
+            // NO drain — yOps holds the minted yAsset as unallocated, so
+            // previewPayOut returns true and the unmint goes instant.
+
+            await ctx.proToken
+                .connect(ctx.accounts.user1)
+                .approve(ctx.proTokenOperationsAddress, bal);
+
+            const createTx = await ctx.proTokenOperations
+                .connect(ctx.accounts.user1)
+                .createUnmintRequest(ctx.yAssetAddress, bal, 0n, ZERO_ADDRESS);
+            const createReceipt = await createTx.wait();
+            const opsRequestId = (createReceipt!.logs
+                .map((l) => {
+                    try {
+                        return ctx.proTokenOperations.interface.parseLog(l as never);
+                    } catch {
+                        return null;
+                    }
+                })
+                .find((e) => e?.name === EVENTS.UnmintRequestCreated)!.args
+                .requestID) as bigint;
+
+            const proofData: ProofData = {
+                requestId: opsRequestId,
+                user: ctx.accounts.user1.address,
+                receiver: ZERO_ADDRESS,
+                yAsset: ctx.yAssetAddress,
+                amount: bal,
+                minAmountOut: 0n,
+                proofKind: ProofKind.PROOF_OF_APPROVE,
+            };
+            const proof = await signUnmintProof(
+                ctx.accounts.authority,
+                ctx.proTokenOperationsAddress,
+                proofData,
+            );
+
+            // Expect the instant event on ProTokenOperations
+            await expect(
+                ctx.proTokenOperations
+                    .connect(ctx.accounts.user1)
+                    .finalizeUnmintRequest(opsRequestId, ProofKind.PROOF_OF_APPROVE, proof),
+            ).to.emit(ctx.proTokenOperations, EVENTS.ProTokenUnmintInstant);
+
+            // No batch should have been created on the handler.
+            expect(
+                await ctx.proTokenUnmintHandler.getCurrentUnmintBatchId(ctx.yAssetAddress),
+            ).to.equal(0n);
+            expect(
+                await ctx.proTokenUnmintHandler.getNextUnmintRequestId(ctx.yAssetAddress),
+            ).to.equal(0n);
+
+            // User received the yAsset directly.
+            expect(
+                await ctx.yAsset.balanceOf(ctx.accounts.user1.address),
+            ).to.be.gt(0n);
+        });
+
+        it("queued path: emits ProTokenUnmintQueued and creates batch 1 on the handler", async function () {
+            const ctx = await loadFixture(fullProtocolFixture);
+            await authorizeBackend(ctx);
+
+            await mintProTokensFor(ctx, ctx.accounts.user1, HUNDRED_TOKENS);
+            const bal = await ctx.proToken.balanceOf(ctx.accounts.user1.address);
+
+            // Drain to force the queued path.
+            await drainYAssetOps(ctx);
+
+            await ctx.proToken
+                .connect(ctx.accounts.user1)
+                .approve(ctx.proTokenOperationsAddress, bal);
+
+            const createTx = await ctx.proTokenOperations
+                .connect(ctx.accounts.user1)
+                .createUnmintRequest(ctx.yAssetAddress, bal, 0n, ZERO_ADDRESS);
+            const createReceipt = await createTx.wait();
+            const opsRequestId = (createReceipt!.logs
+                .map((l) => {
+                    try {
+                        return ctx.proTokenOperations.interface.parseLog(l as never);
+                    } catch {
+                        return null;
+                    }
+                })
+                .find((e) => e?.name === EVENTS.UnmintRequestCreated)!.args
+                .requestID) as bigint;
+
+            const proofData: ProofData = {
+                requestId: opsRequestId,
+                user: ctx.accounts.user1.address,
+                receiver: ZERO_ADDRESS,
+                yAsset: ctx.yAssetAddress,
+                amount: bal,
+                minAmountOut: 0n,
+                proofKind: ProofKind.PROOF_OF_APPROVE,
+            };
+            const proof = await signUnmintProof(
+                ctx.accounts.authority,
+                ctx.proTokenOperationsAddress,
+                proofData,
+            );
+
+            // Expect the queued event on ProTokenOperations, plus the handler's
+            // UnmintRequestCreated event (which fires inside the same tx).
+            await expect(
+                ctx.proTokenOperations
+                    .connect(ctx.accounts.user1)
+                    .finalizeUnmintRequest(opsRequestId, ProofKind.PROOF_OF_APPROVE, proof),
+            )
+                .to.emit(ctx.proTokenOperations, EVENTS.ProTokenUnmintQueued)
+                .and.to.emit(ctx.proTokenUnmintHandler, EVENTS.UnmintRequestCreated);
+
+            // A batch must now exist.
+            expect(
+                await ctx.proTokenUnmintHandler.getCurrentUnmintBatchId(ctx.yAssetAddress),
+            ).to.equal(1n);
+
+            const batch = await ctx.proTokenUnmintHandler.getUnmintBatch(
+                ctx.yAssetAddress,
+                1n,
+            );
+            expect(batch.totalAmount).to.be.gt(0n);
+            expect(batch.processed).to.equal(false);
+
+            // User did NOT receive yAsset yet — it's queued.
+            expect(
+                await ctx.yAsset.balanceOf(ctx.accounts.user1.address),
+            ).to.equal(0n);
+        });
+
+        it("mixed: instant first, then queued only after drain", async function () {
+            const ctx = await loadFixture(fullProtocolFixture);
+            await authorizeBackend(ctx);
+
+            // user1 mints and unmints — instant (no drain yet).
+            await mintProTokensFor(ctx, ctx.accounts.user1, HUNDRED_TOKENS);
+            const bal1 = await ctx.proToken.balanceOf(ctx.accounts.user1.address);
+
+            await ctx.proToken
+                .connect(ctx.accounts.user1)
+                .approve(ctx.proTokenOperationsAddress, bal1);
+            const createTx1 = await ctx.proTokenOperations
+                .connect(ctx.accounts.user1)
+                .createUnmintRequest(ctx.yAssetAddress, bal1, 0n, ZERO_ADDRESS);
+            const opsRequestId1 = ((await createTx1.wait())!.logs
+                .map((l) => {
+                    try {
+                        return ctx.proTokenOperations.interface.parseLog(l as never);
+                    } catch {
+                        return null;
+                    }
+                })
+                .find((e) => e?.name === EVENTS.UnmintRequestCreated)!.args
+                .requestID) as bigint;
+            const proof1 = await signUnmintProof(
+                ctx.accounts.authority,
+                ctx.proTokenOperationsAddress,
+                {
+                    requestId: opsRequestId1,
+                    user: ctx.accounts.user1.address,
+                    receiver: ZERO_ADDRESS,
+                    yAsset: ctx.yAssetAddress,
+                    amount: bal1,
+                    minAmountOut: 0n,
+                    proofKind: ProofKind.PROOF_OF_APPROVE,
+                },
+            );
+            await ctx.proTokenOperations
+                .connect(ctx.accounts.user1)
+                .finalizeUnmintRequest(opsRequestId1, ProofKind.PROOF_OF_APPROVE, proof1);
+
+            // No batch yet — user1 went instant.
+            expect(
+                await ctx.proTokenUnmintHandler.getCurrentUnmintBatchId(ctx.yAssetAddress),
+            ).to.equal(0n);
+
+            // user2 mints, but BEFORE the unmint we drain — forces queued.
+            await mintProTokensFor(ctx, ctx.accounts.user2, HUNDRED_TOKENS);
+            await drainYAssetOps(ctx);
+            const bal2 = await ctx.proToken.balanceOf(ctx.accounts.user2.address);
+
+            await ctx.proToken
+                .connect(ctx.accounts.user2)
+                .approve(ctx.proTokenOperationsAddress, bal2);
+            const createTx2 = await ctx.proTokenOperations
+                .connect(ctx.accounts.user2)
+                .createUnmintRequest(ctx.yAssetAddress, bal2, 0n, ZERO_ADDRESS);
+            const opsRequestId2 = ((await createTx2.wait())!.logs
+                .map((l) => {
+                    try {
+                        return ctx.proTokenOperations.interface.parseLog(l as never);
+                    } catch {
+                        return null;
+                    }
+                })
+                .find((e) => e?.name === EVENTS.UnmintRequestCreated)!.args
+                .requestID) as bigint;
+            const proof2 = await signUnmintProof(
+                ctx.accounts.authority,
+                ctx.proTokenOperationsAddress,
+                {
+                    requestId: opsRequestId2,
+                    user: ctx.accounts.user2.address,
+                    receiver: ZERO_ADDRESS,
+                    yAsset: ctx.yAssetAddress,
+                    amount: bal2,
+                    minAmountOut: 0n,
+                    proofKind: ProofKind.PROOF_OF_APPROVE,
+                },
+            );
+            await expect(
+                ctx.proTokenOperations
+                    .connect(ctx.accounts.user2)
+                    .finalizeUnmintRequest(opsRequestId2, ProofKind.PROOF_OF_APPROVE, proof2),
+            ).to.emit(ctx.proTokenOperations, EVENTS.ProTokenUnmintQueued);
+
+            // First batch created only after user2's queued unmint.
+            expect(
+                await ctx.proTokenUnmintHandler.getCurrentUnmintBatchId(ctx.yAssetAddress),
+            ).to.equal(1n);
+        });
+
+        it("queued event's handlerRequestId matches getUnmintRequestIdForReceiverInBatch", async function () {
+            const ctx = await loadFixture(fullProtocolFixture);
+            await authorizeBackend(ctx);
+
+            await mintProTokensFor(ctx, ctx.accounts.user1, HUNDRED_TOKENS);
+            const bal = await ctx.proToken.balanceOf(ctx.accounts.user1.address);
+            await drainYAssetOps(ctx);
+
+            await ctx.proToken
+                .connect(ctx.accounts.user1)
+                .approve(ctx.proTokenOperationsAddress, bal);
+            const createTx = await ctx.proTokenOperations
+                .connect(ctx.accounts.user1)
+                .createUnmintRequest(ctx.yAssetAddress, bal, 0n, ZERO_ADDRESS);
+            const opsRequestId = ((await createTx.wait())!.logs
+                .map((l) => {
+                    try {
+                        return ctx.proTokenOperations.interface.parseLog(l as never);
+                    } catch {
+                        return null;
+                    }
+                })
+                .find((e) => e?.name === EVENTS.UnmintRequestCreated)!.args
+                .requestID) as bigint;
+            const proof = await signUnmintProof(
+                ctx.accounts.authority,
+                ctx.proTokenOperationsAddress,
+                {
+                    requestId: opsRequestId,
+                    user: ctx.accounts.user1.address,
+                    receiver: ZERO_ADDRESS,
+                    yAsset: ctx.yAssetAddress,
+                    amount: bal,
+                    minAmountOut: 0n,
+                    proofKind: ProofKind.PROOF_OF_APPROVE,
+                },
+            );
+
+            const finalizeTx = await ctx.proTokenOperations
+                .connect(ctx.accounts.user1)
+                .finalizeUnmintRequest(opsRequestId, ProofKind.PROOF_OF_APPROVE, proof);
+            const finalizeReceipt = await finalizeTx.wait();
+
+            const queuedEvent = finalizeReceipt!.logs
+                .map((l) => {
+                    try {
+                        return ctx.proTokenOperations.interface.parseLog(l as never);
+                    } catch {
+                        return null;
+                    }
+                })
+                .find((e) => e?.name === EVENTS.ProTokenUnmintQueued);
+            expect(queuedEvent).to.not.be.undefined;
+
+            const emittedHandlerRequestId =
+                queuedEvent!.args.handlerRequestId as bigint;
+
+            const viewHandlerRequestId =
+                await ctx.proTokenUnmintHandler.getUnmintRequestIdForReceiverInBatch(
+                    ctx.yAssetAddress,
+                    1n,
+                    ctx.accounts.user1.address,
+                );
+
+            expect(emittedHandlerRequestId).to.equal(viewHandlerRequestId);
+        });
+    });
+
+    // =======================================================================
+    // createUnmintRequest (called via ProTokenOperations) — queued path only
+    // (the only path that reaches this handler).
     // =======================================================================
     describe("createUnmintRequest()", function () {
         it("creates a new batch on the first request", async function () {
@@ -369,6 +713,10 @@ describe("ProTokenUnmintHandler", function () {
 
             await mintProTokensFor(ctx, ctx.accounts.user1, HUNDRED_TOKENS);
             const bal = await ctx.proToken.balanceOf(ctx.accounts.user1.address);
+
+            // Force queued path so the handler emits.
+            await drainYAssetOps(ctx);
+
             await ctx.proToken
                 .connect(ctx.accounts.user1)
                 .approve(ctx.proTokenOperationsAddress, bal);
@@ -421,10 +769,15 @@ describe("ProTokenUnmintHandler", function () {
             const total = await ctx.proToken.balanceOf(ctx.accounts.user1.address);
             const half = total / 2n;
 
-            // First request — creates the batch and the first handler request
+            // First request — creates the batch and the first handler request.
+            // createUnmintFor drains for us.
             await createUnmintFor(ctx, ctx.accounts.user1, half);
 
-            // Second request — aggregated into the same handler request
+            // Second request — aggregated into the same handler request.
+            // Drain again because the first finalize might have emptied yOps;
+            // any new minted yAsset between calls would re-enable the instant path.
+            await drainYAssetOps(ctx);
+
             await ctx.proToken
                 .connect(ctx.accounts.user1)
                 .approve(ctx.proTokenOperationsAddress, half);

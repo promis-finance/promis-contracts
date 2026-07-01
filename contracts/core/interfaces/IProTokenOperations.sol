@@ -220,22 +220,53 @@ interface IProTokenOperations {
     );
 
     /**
-     * @notice Emitted when pro tokens are successfully burned to withdraw the unmint asset
-     * @dev This event provides a complete record of the unminting transaction including any fees applied.
-     *      The unmintAssetAmount reflects the final amount after deducting unminting fees if applicable.
-     *      Unminting always uses a 1:1 ratio with decimal conversion.
-     * @param sender The wallet address that initiated the unminting transaction and burned the pro tokens
-     * @param receiver The wallet address that will receive the unminted assets
-     * @param yAsset The contract address of the unmint asset that was withdrawn
-     * @param proTokenAmount The quantity of pro tokens burned, in 18 decimals
-     * @param unmintYAssetAmount The quantity of unmint asset transferred to receiver (after fees), in asset's native decimals
+     * @notice Emitted when an unmint request is finalized via the instant path —
+     *         yAsset was paid out directly to the recipient in the same transaction.
+     * @dev Fires from finalizeUnmintRequest -> _executeUnmint when YAssetOperationsHandler
+     *      reports sufficient liquidity (unallocated + handler balances) to cover the
+     *      payout. The proUSD has been burned and the yAsset has been transferred to
+     *      the recipient before this event fires.
+     * @param sender The user who created the unmint request.
+     * @param recipient The address that received the yAsset (request.receiver if set,
+     *        otherwise request.user).
+     * @param yAsset The yield asset that was paid out.
+     * @param proTokenAmount The amount of proUSD burned to fulfill the request.
+     * @param yAssetAmount The amount of yAsset transferred to the recipient,
+     *        net of any unmintFeePer.
      */
-    event ProTokenUnmint(
+    event ProTokenUnmintInstant(
         address indexed sender,
-        address indexed receiver,
+        address indexed recipient,
         address indexed yAsset,
         uint256 proTokenAmount,
-        uint256 unmintYAssetAmount
+        uint256 yAssetAmount
+    );
+
+    /**
+     * @notice Emitted when an unmint request is finalized via the queued path —
+     *         yAsset will be paid out to the recipient when the next batch in
+     *         ProTokenUnmintHandler is processed.
+     * @dev Fires from finalizeUnmintRequest -> _executeUnmint when YAssetOperationsHandler
+     *      reports insufficient liquidity for an instant payout. The proUSD has been
+     *      burned and the recipient must claim from ProTokenUnmintHandler once the
+     *      batch is processed by the operator. The handlerRequestId may refer to a
+     *      newly-created request or an existing aggregated request in the current batch
+     *      (UnmintHandler aggregates by (yAsset, receiver)).
+     * @param sender The user who created the unmint request.
+     * @param recipient The address that will receive the yAsset on claim.
+     * @param yAsset The yield asset that will be paid out.
+     * @param proTokenAmount The amount of proUSD burned to fulfill the request.
+     * @param yAssetQueued The amount of yAsset queued for delivery, net of any unmintFeePer.
+     * @param handlerRequestId The request id in ProTokenUnmintHandler used to claim
+     *        the yAsset once the batch is processed.
+     */
+    event ProTokenUnmintQueued(
+        address indexed sender,
+        address indexed recipient,
+        address indexed yAsset,
+        uint256 proTokenAmount,
+        uint256 yAssetQueued,
+        uint256 handlerRequestId
     );
 
     /**
@@ -255,21 +286,54 @@ interface IProTokenOperations {
         uint256 proUSDMinted
     );
 
-    /** 
-     * @notice Emitted when StrategyVault is being borrowed from by Strategist.
-     * @dev Keeps track of strategist actions when borrowing yAssets
-     * @param vault The address of StrategyVault borrowing yAssets
-     * @param yAsset Address of yAsset being borrowed
-     * @param destination Receiver of yAsset borrowed for
-     * @param proUSDBurned Amount of proUSD burned to get yAssets
-     * @return yAssetReceived Amount of yAssets received against burn
-     */ 
-    event StrategicUnmint(
+    /**
+     * @notice Emitted when a strategist unmint is executed via the instant path —
+     *         yAsset was paid out directly to the destination in the same transaction.
+     * @dev Fires from strategicUnmint when YAssetOperationsHandler reports sufficient
+     *      liquidity to cover the payout. Strategist actions skip proof verification
+     *      and the minWithdrawBase floor; only the StrategyVault may invoke this path.
+     *      The proUSD has been burned from the vault and the yAsset has been
+     *      transferred to the destination before this event fires.
+     * @param vault The StrategyVault that initiated the unmint.
+     * @param yAsset The yield asset that was paid out.
+     * @param destination The address that received the yAsset, as nominated by the
+     *        strategist on the vault's borrow() call.
+     * @param proUSDBurned The amount of proUSD burned from the vault.
+     * @param yAssetReceived The amount of yAsset transferred to the destination.
+     */
+    event StrategicUnmintInstant(
         address indexed vault,
         address indexed yAsset,
         address indexed destination,
         uint256 proUSDBurned,
         uint256 yAssetReceived
+    );
+
+    /**
+     * @notice Emitted when a strategist unmint is queued —
+     *         yAsset will be paid out to the destination when the next batch in
+     *         ProTokenUnmintHandler is processed.
+     * @dev Fires from strategicUnmint when YAssetOperationsHandler reports insufficient
+     *      liquidity for an instant payout. The proUSD has been burned from the vault;
+     *      the destination must claim from ProTokenUnmintHandler once the operator
+     *      processes the batch. Vault accounting (depositBase / depositProUSD) is reduced
+     *      regardless of which path is taken — the obligation is settled at burn time.
+     * @param vault The StrategyVault that initiated the unmint.
+     * @param yAsset The yield asset that will be paid out.
+     * @param destination The address that will receive the yAsset on claim, as
+     *        nominated by the strategist on the vault's borrow() call.
+     * @param proUSDBurned The amount of proUSD burned from the vault.
+     * @param yAssetQueued The amount of yAsset queued for delivery to the destination.
+     * @param handlerRequestId The request id in ProTokenUnmintHandler used to claim
+     *        the yAsset once the batch is processed.
+     */
+    event StrategicUnmintQueued(
+        address indexed vault,
+        address indexed yAsset,
+        address indexed destination,
+        uint256 proUSDBurned,
+        uint256 yAssetQueued,
+        uint256 handlerRequestId
     );
 
     /**

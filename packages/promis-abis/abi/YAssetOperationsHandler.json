@@ -516,6 +516,25 @@
     "type": "function"
   },
   {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "amount",
+        "type": "uint256"
+      }
+    ],
+    "name": "previewPayOut",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "sufficient",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
     "inputs": [],
     "name": "proxiableUUID",
     "outputs": [

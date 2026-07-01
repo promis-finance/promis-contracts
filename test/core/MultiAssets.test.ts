@@ -39,11 +39,47 @@ import {
 //   - 1 proToken → 1 USDC. Decimal contraction by 1e12.
 //   - Min deposit / withdraw are enforced in base (USD) terms: 100e18 each,
 //     i.e. at least 100 USDC to mint and at least 100 proToken to redeem.
+//
+// BRANCHING NOTE (instant vs queued unmint):
+// After the unmint refactor, ProTokenOperations._executeUnmint and strategicUnmint
+// branch on YAssetOperationsHandler.previewPayOut(amount). With the default
+// fixture (and addYAsset() below) no yield protocol handlers are configured, so
+// yAsset transferred into a YAssetOperationsHandler stays unallocated.
+// previewPayOut therefore returns true for amounts up to that pool and unmints
+// route to the INSTANT branch by default. Tests in this file that exercise the
+// full mint → unmint → batch → claim flow rely on the QUEUED branch, so
+// createUnmintFor() drains the relevant handler's unallocated balance first via
+// drainYAssetOps() to force queued routing.
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Reusable helpers (local — same shape as the per-contract test files)
 // ---------------------------------------------------------------------------
+
+/**
+ * Drain all unallocated yAsset from the YAssetOperationsHandler for `yAssetAddr`.
+ * Resolves the handler via Settings so this works for any registered yAsset
+ * (default 18-dec, USDC, or anything added via addYAsset()).
+ *
+ * Forces the queued unmint branch by emptying the source previewPayOut reads
+ * from. No-op when there's nothing to drain.
+ */
+async function drainYAssetOps(ctx: FullProtocolFixture, yAssetAddr: string) {
+    const info = await ctx.proTokenSettings.getYAssets([yAssetAddr]);
+    const handlerAddr = info.yAssets[0].settings.yOperationsHandler;
+
+    const token = await ethers.getContractAt("MintableERC20", yAssetAddr);
+    const balance = await token.balanceOf(handlerAddr);
+    if (balance === 0n) return;
+
+    const handler = await ethers.getContractAt(
+        "YAssetOperationsHandler",
+        handlerAddr,
+    );
+    await handler
+        .connect(ctx.accounts.admin)
+        .withdrawalYieldAssets(ZERO_ADDRESS, balance);
+}
 
 /**
  * Sign-and-finalize mint flow. Returns the resulting proToken balance.
@@ -103,6 +139,11 @@ async function mintProTokensFor(
 /**
  * Sign-and-finalize unmint flow. Returns the operations-side request id and
  * the corresponding unmint handler request id.
+ *
+ * Drains the relevant yAsset's yOps liquidity first to guarantee the QUEUED
+ * branch runs — tests using this helper rely on the request landing in the
+ * unmint handler. For instant-path coverage at this level see the per-contract
+ * test files (ProTokenOperations.test.ts, ProTokenUnmintHandler.test.ts).
  */
 async function createUnmintFor(
     ctx: FullProtocolFixture,
@@ -110,6 +151,8 @@ async function createUnmintFor(
     yAssetAddr: string,
     proTokenAmount: bigint,
 ): Promise<{ opsRequestId: bigint; handlerRequestId: bigint }> {
+    await drainYAssetOps(ctx, yAssetAddr);
+
     await ctx.proToken
         .connect(user)
         .approve(ctx.proTokenOperationsAddress, proTokenAmount);
@@ -254,7 +297,7 @@ describe("Multi-yAsset Scenarios", function () {
             expect(finalBal).to.equal(expectedProToken);
         });
 
-        it("unmint contracts 18-dec proToken back to 6-dec USDC (100 proToken → 100 USDC)", async function () {
+        it("queued unmint contracts 18-dec proToken back to 6-dec USDC (100 proToken → 100 USDC)", async function () {
             const ctx = await loadFixture(setup6Dec);
 
             const hundredUSDC = 100n * 10n ** 6n;
@@ -269,7 +312,7 @@ describe("Multi-yAsset Scenarios", function () {
                 hundredUSDC,
             );
 
-            // Unmint the resulting proToken
+            // Unmint the resulting proToken (createUnmintFor drains → queued path)
             const { handlerRequestId } = await createUnmintFor(
                 ctx,
                 ctx.accounts.user1,
@@ -300,6 +343,70 @@ describe("Multi-yAsset Scenarios", function () {
             const usdcAfter = await ctx.usdc.token.balanceOf(ctx.accounts.user1.address);
 
             expect(usdcAfter - usdcBefore).to.equal(hundredUSDC);
+        });
+
+        it("instant unmint contracts 18-dec proToken back to 6-dec USDC in one tx (100 proToken → 100 USDC)", async function () {
+            const ctx = await loadFixture(setup6Dec);
+
+            const hundredUSDC = 100n * 10n ** 6n;
+            const hundredProToken = 100n * 10n ** 18n;
+
+            // Mint 100 USDC worth — the USDC stays unallocated on its yOps.
+            await mintProTokensFor(
+                ctx,
+                ctx.accounts.user1,
+                ctx.usdc.tokenAddr,
+                ctx.usdc.token,
+                hundredUSDC,
+            );
+
+            // Inline the unmint without draining — yOps has the USDC, instant path runs.
+            await ctx.proToken
+                .connect(ctx.accounts.user1)
+                .approve(ctx.proTokenOperationsAddress, hundredProToken);
+            const createTx = await ctx.proTokenOperations
+                .connect(ctx.accounts.user1)
+                .createUnmintRequest(ctx.usdc.tokenAddr, hundredProToken, 0n, ZERO_ADDRESS);
+            const opsRequestId = ((await createTx.wait())!.logs
+                .map((l) => {
+                    try {
+                        return ctx.proTokenOperations.interface.parseLog(l as never);
+                    } catch {
+                        return null;
+                    }
+                })
+                .find((e) => e?.name === EVENTS.UnmintRequestCreated)!.args
+                .requestID) as bigint;
+
+            const proof = await signUnmintProof(
+                ctx.accounts.authority,
+                ctx.proTokenOperationsAddress,
+                {
+                    requestId: opsRequestId,
+                    user: ctx.accounts.user1.address,
+                    receiver: ZERO_ADDRESS,
+                    yAsset: ctx.usdc.tokenAddr,
+                    amount: hundredProToken,
+                    minAmountOut: 0n,
+                    proofKind: ProofKind.PROOF_OF_APPROVE,
+                },
+            );
+
+            const before = await ctx.usdc.token.balanceOf(ctx.accounts.user1.address);
+            await expect(
+                ctx.proTokenOperations
+                    .connect(ctx.accounts.user1)
+                    .finalizeUnmintRequest(opsRequestId, ProofKind.PROOF_OF_APPROVE, proof),
+            ).to.emit(ctx.proTokenOperations, EVENTS.ProTokenUnmintInstant);
+            const after = await ctx.usdc.token.balanceOf(ctx.accounts.user1.address);
+
+            // Recipient got USDC directly in the finalize tx (decimal contraction preserved).
+            expect(after - before).to.equal(hundredUSDC);
+
+            // No batch created on the handler.
+            expect(
+                await ctx.proTokenUnmintHandler.getCurrentUnmintBatchId(ctx.usdc.tokenAddr),
+            ).to.equal(0n);
         });
 
         it("mint below the 100-base deposit floor reverts BelowMinDeposit", async function () {
@@ -384,7 +491,7 @@ describe("Multi-yAsset Scenarios", function () {
             ).to.not.be.reverted;
         });
 
-        it("round-trips a 6-dec asset at the configured price", async function () {
+        it("round-trips a 6-dec asset at the configured price (queued path)", async function () {
             const ctx = await loadFixture(setup6Dec);
             const tenThousandUSDC = 10_000n * 10n ** 6n;
             await mintProTokensFor(
@@ -492,10 +599,10 @@ describe("Multi-yAsset Scenarios", function () {
             expect(await ctx.proToken.totalSupply()).to.equal(HUNDRED_TOKENS * 2n);
         });
 
-        it("unmint batches are independent per yAsset", async function () {
+        it("queued unmint batches are independent per yAsset", async function () {
             const ctx = await loadFixture(setupTwoAssets);
 
-            // user1 mints + unmints via 18-dec yAsset
+            // user1 mints + unmints via 18-dec yAsset (createUnmintFor drains that yOps)
             await mintProTokensFor(
                 ctx,
                 ctx.accounts.user1,
@@ -511,7 +618,7 @@ describe("Multi-yAsset Scenarios", function () {
                 user1Bal,
             );
 
-            // user2 mints + unmints via USDC
+            // user2 mints + unmints via USDC (createUnmintFor drains the USDC yOps)
             await mintProTokensFor(
                 ctx,
                 ctx.accounts.user2,
@@ -548,10 +655,10 @@ describe("Multi-yAsset Scenarios", function () {
             expect(usdcBatch.totalAmount).to.equal(100n * 10n ** 6n);
         });
 
-        it("processing one yAsset's batch does not impact the other", async function () {
+        it("processing one yAsset's queued batch does not impact the other", async function () {
             const ctx = await loadFixture(setupTwoAssets);
 
-            // Mint and unmint with both
+            // Mint and unmint with both (each createUnmintFor drains its yAsset's yOps)
             await mintProTokensFor(
                 ctx,
                 ctx.accounts.user1,
@@ -603,6 +710,62 @@ describe("Multi-yAsset Scenarios", function () {
             // USDC batch is NOT processed
             expect(
                 await ctx.proTokenUnmintHandler.getLastProcessedBatchId(ctx.usdc.tokenAddr),
+            ).to.equal(0n);
+        });
+
+        it("instant unmint on one yAsset does not create a batch on the other", async function () {
+            const ctx = await loadFixture(setupTwoAssets);
+
+            // user1 mints via 18-dec yAsset → its yOps holds the yAsset.
+            await mintProTokensFor(
+                ctx,
+                ctx.accounts.user1,
+                ctx.yAssetAddress,
+                ctx.yAsset,
+                HUNDRED_TOKENS,
+            );
+
+            // user1 unmints via 18-dec yAsset inline (no drain → instant).
+            const user1Bal = await ctx.proToken.balanceOf(ctx.accounts.user1.address);
+            await ctx.proToken
+                .connect(ctx.accounts.user1)
+                .approve(ctx.proTokenOperationsAddress, user1Bal);
+            const createTx = await ctx.proTokenOperations
+                .connect(ctx.accounts.user1)
+                .createUnmintRequest(ctx.yAssetAddress, user1Bal, 0n, ZERO_ADDRESS);
+            const opsRequestId = ((await createTx.wait())!.logs
+                .map((l) => {
+                    try {
+                        return ctx.proTokenOperations.interface.parseLog(l as never);
+                    } catch {
+                        return null;
+                    }
+                })
+                .find((e) => e?.name === EVENTS.UnmintRequestCreated)!.args
+                .requestID) as bigint;
+            const proof = await signUnmintProof(
+                ctx.accounts.authority,
+                ctx.proTokenOperationsAddress,
+                {
+                    requestId: opsRequestId,
+                    user: ctx.accounts.user1.address,
+                    receiver: ZERO_ADDRESS,
+                    yAsset: ctx.yAssetAddress,
+                    amount: user1Bal,
+                    minAmountOut: 0n,
+                    proofKind: ProofKind.PROOF_OF_APPROVE,
+                },
+            );
+            await ctx.proTokenOperations
+                .connect(ctx.accounts.user1)
+                .finalizeUnmintRequest(opsRequestId, ProofKind.PROOF_OF_APPROVE, proof);
+
+            // Neither yAsset has a batch — 18-dec went instant; USDC saw no activity.
+            expect(
+                await ctx.proTokenUnmintHandler.getCurrentUnmintBatchId(ctx.yAssetAddress),
+            ).to.equal(0n);
+            expect(
+                await ctx.proTokenUnmintHandler.getCurrentUnmintBatchId(ctx.usdc.tokenAddr),
             ).to.equal(0n);
         });
     });
