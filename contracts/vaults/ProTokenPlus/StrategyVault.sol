@@ -255,10 +255,10 @@ contract StrategyVault is
 
         uint256 proUSDAmount = (worthBase * USD_PRECISION) / price;
 
-        if (proUSDAmount > withdrawProUSD)
-            revert RegiveUnderfunded(proUSDAmount, withdrawProUSD);
-        if (worthBase > withdrawBase)
-            revert RegiveUnderfunded(worthBase, withdrawBase);
+        if (proUSDAmount > withdrawProUSD || worthBase > withdrawBase) {
+            emit RegivenAsync(msg.sender, proUSDAmount, worthBase);
+            return;
+        }
 
         withdrawProUSD -= proUSDAmount;
         withdrawBase   -= worthBase;
@@ -351,6 +351,32 @@ contract StrategyVault is
     // ================================================
     // ============== Admin functions =================
     // ================================================
+
+    /// @inheritdoc IStrategyVault
+    function rotate(
+        uint256 worthBase
+    ) external override onlyAdminOrOperator nonReentrant {
+        _accrueGrowth();
+
+        if (worthBase == 0) revert ZeroAmount();
+
+        uint256 price = lastPrice;
+        if (price == 0) revert PriceUnavailable();
+
+        uint256 proUSDAmount = (worthBase * USD_PRECISION) / price;
+
+        if (worthBase > withdrawBase)
+            revert RotateUnderfunded(worthBase, withdrawBase);
+        if (proUSDAmount > withdrawProUSD)
+            revert RotateUnderfunded(proUSDAmount, withdrawProUSD);
+
+        withdrawBase   -= worthBase;
+        withdrawProUSD -= proUSDAmount;
+        depositBase    += worthBase;
+        depositProUSD  += proUSDAmount;
+
+        emit Rotated(msg.sender, proUSDAmount, worthBase);
+    }
 
     /// @inheritdoc IStrategyVault
     function claimGrowth(

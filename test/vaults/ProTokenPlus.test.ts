@@ -1530,16 +1530,30 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             expect(held).to.be.gte(obligations);
         });
 
-        it("relock reverts when the withdraw reserve is unfunded (RegiveUnderfunded)", async function () {
+        it("relock with unfunded reserve emits RegivenAsync instead of reverting", async function () {
+            // Under the async-regive design, an underfunded reserve does NOT block relock.
+            // The vault emits RegivenAsync with the deferred amounts and skips its ledger
+            // shuffle; a follow-up rotate() by the operator settles the ledger once the
+            // strategist has repaid. Covered end-to-end in the "Async regive and rotate"
+            // describe block below.
             const ctx = await loadFixture(proTokenPlusFixture);
             const user = ctx.accounts.user1;
             const positionId = await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
             // No prefund — reserve is empty.
             await time.increase(Number(QUARTERLY_DURATION) + 1);
 
+            // At NAV $1, proUSDAmount == worthBase == HUNDRED_TOKENS.
             await expect(
                 ctx.proTokenPlus.connect(user).relock([positionId], HUNDRED_TOKENS, ANNUAL_TIER_ID, []),
-            ).to.be.revertedWithCustomError(ctx.strategyVault, "RegiveUnderfunded");
+            )
+                .to.emit(ctx.strategyVault, "RegivenAsync")
+                .withArgs(ctx.proTokenPlusAddress, HUNDRED_TOKENS, HUNDRED_TOKENS);
+
+            // Position-side state advanced: source RELOCATED, new position exists.
+            const oldPositions = await ctx.proTokenPlus.getUserPositions([positionId]);
+            expect(oldPositions[0].status).to.equal(POSITION_STATUS_RELOCATED);
+            const activeIds = await ctx.proTokenPlus.getUserPositionIds(user.address, 0, 10, true);
+            expect(activeIds.totalCount).to.equal(2n);
         });
 
         it("reverts when relocking from a still-locked position", async function () {
@@ -1590,6 +1604,233 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             await expect(
                 ctx.proTokenPlus.connect(user).relock([positionId, positionId], HUNDRED_TOKENS, ANNUAL_TIER_ID, []),
             ).to.be.revertedWithCustomError(ctx.proTokenPlus, "DuplicatePositionId");
+        });
+    });
+
+    // =======================================================================
+    // Async regive and rotate
+    //
+    // When executeRelock calls regive() on a vault whose withdraw reserve is
+    // underfunded (strategist hasn't repaid yet), the vault does NOT revert.
+    // It emits RegivenAsync with the shortfall amounts, skips its ledger
+    // shuffle, and returns. This lets user-facing relock succeed regardless
+    // of strategist repay timing.
+    //
+    // The ledger catch-up happens later: once the strategist repays and the
+    // withdraw reserve holds funds, the operator (or admin) calls rotate()
+    // to move worthBase (and its proUSD equivalent at current price) from
+    // the withdraw pool to the deposit pool, emitting Rotated. Backend
+    // tracks the running sum: Σ RegivenAsync.worthBase − Σ Rotated.worthBase
+    // gives the pending delta that still needs settlement.
+    //
+    // Scenario the tests exercise: strategist borrows the ENTIRE original
+    // deposit BEFORE the relock. This drives depositBase to 0 and, since
+    // no repay has happened, withdrawBase is 0 too — so relock's regive
+    // truly cannot shuffle, and RegivenAsync fires. 
+    // =======================================================================
+    describe("Async regive and rotate", function () {
+        it("RegivenAsync fires with (caller, proUSDAmount, worthBase); no Regiven and no ledger movement", async function () {
+            const ctx = await loadFixture(proTokenPlusFixture);
+            const user = ctx.accounts.user1;
+
+            const positionId = await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
+            // Strategist drains depositBase and never repays → withdrawBase is also 0.
+            await strategistBorrow(ctx, HUNDRED_TOKENS);
+            expect(await ctx.strategyVault.depositBase()).to.equal(0n);
+            expect(await ctx.strategyVault.withdrawBase()).to.equal(0n);
+
+            await time.increase(Number(QUARTERLY_DURATION) + 1);
+
+            const depositProBefore = await ctx.strategyVault.depositProUSD();
+            const depositBaseBefore = await ctx.strategyVault.depositBase();
+            const withdrawProBefore = await ctx.strategyVault.withdrawProUSD();
+            const withdrawBaseBefore = await ctx.strategyVault.withdrawBase();
+
+            // caller in the event is the ProTokenPlus proxy (regive runs from the
+            // Operations delegatecall inside ProTokenPlus's context).
+            await expect(
+                ctx.proTokenPlus.connect(user).relock([positionId], HUNDRED_TOKENS, ANNUAL_TIER_ID, []),
+            )
+                .to.emit(ctx.strategyVault, "RegivenAsync")
+                .withArgs(ctx.proTokenPlusAddress, HUNDRED_TOKENS, HUNDRED_TOKENS);
+
+            // Vault ledgers untouched — regive's async branch skipped every mutation.
+            expect(await ctx.strategyVault.depositProUSD()).to.equal(depositProBefore);
+            expect(await ctx.strategyVault.depositBase()).to.equal(depositBaseBefore);
+            expect(await ctx.strategyVault.withdrawProUSD()).to.equal(withdrawProBefore);
+            expect(await ctx.strategyVault.withdrawBase()).to.equal(withdrawBaseBefore);
+        });
+
+        it("async relock still creates the new position and marks the source RELOCATED", async function () {
+            const ctx = await loadFixture(proTokenPlusFixture);
+            const user = ctx.accounts.user1;
+
+            const positionId = await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
+            await strategistBorrow(ctx, HUNDRED_TOKENS);
+            await time.increase(Number(QUARTERLY_DURATION) + 1);
+
+            const { newPositionId, fromTierId } = await relockFor(
+                ctx, user, [positionId], HUNDRED_TOKENS, ANNUAL_TIER_ID,
+            );
+            expect(fromTierId).to.equal(QUARTERLY_TIER_ID);
+
+            const newPositions = await ctx.proTokenPlus.getUserPositions([newPositionId]);
+            expect(newPositions[0].lockedTierId).to.equal(ANNUAL_TIER_ID);
+            expect(newPositions[0].amount).to.equal(HUNDRED_TOKENS);
+
+            const oldPositions = await ctx.proTokenPlus.getUserPositions([positionId]);
+            expect(oldPositions[0].status).to.equal(POSITION_STATUS_RELOCATED);
+        });
+
+        it("rotate moves worthBase from withdraw pool to deposit pool and emits Rotated", async function () {
+            const ctx = await loadFixture(proTokenPlusFixture);
+            const user = ctx.accounts.user1;
+
+            // Deposit, strategist borrows, then user relocks → RegivenAsync (deferred).
+            const positionId = await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
+            await strategistBorrow(ctx, HUNDRED_TOKENS);
+            await time.increase(Number(QUARTERLY_DURATION) + 1);
+            await ctx.proTokenPlus.connect(user).relock([positionId], HUNDRED_TOKENS, ANNUAL_TIER_ID, []);
+
+            // Strategist repays enough to cover the deferred worthBase.
+            // yAsset is 6-dec USDC; strategicMint converts 1:1 to proUSD at NAV $1.
+            const repayUSDC = 200n * 10n ** 6n; // 200 USDC → ~200 proUSD into withdraw pool
+            await ctx.yAsset.mint(ctx.accounts.strategist.address, repayUSDC);
+            await strategistRepay(ctx, repayUSDC);
+
+            const depositBaseBefore = await ctx.strategyVault.depositBase();
+            const depositProBefore = await ctx.strategyVault.depositProUSD();
+            const withdrawBaseBefore = await ctx.strategyVault.withdrawBase();
+            const withdrawProBefore = await ctx.strategyVault.withdrawProUSD();
+
+            const price = BigInt(await ctx.proUSD.getUSDPrice());
+            const expectedProUSD = (HUNDRED_TOKENS * USD_PRECISION) / price;
+
+            await expect(
+                ctx.strategyVault.connect(ctx.accounts.operator).rotate(HUNDRED_TOKENS),
+            )
+                .to.emit(ctx.strategyVault, "Rotated")
+                .withArgs(ctx.accounts.operator.address, expectedProUSD, HUNDRED_TOKENS);
+
+            // depositBase / depositProUSD ↑ by (worthBase, proUSD); withdraw side ↓ by the same.
+            expect((await ctx.strategyVault.depositBase()) - depositBaseBefore).to.equal(HUNDRED_TOKENS);
+            expect((await ctx.strategyVault.depositProUSD()) - depositProBefore).to.equal(expectedProUSD);
+            expect(withdrawBaseBefore - (await ctx.strategyVault.withdrawBase())).to.equal(HUNDRED_TOKENS);
+            expect(withdrawProBefore - (await ctx.strategyVault.withdrawProUSD())).to.equal(expectedProUSD);
+
+            // No new proUSD entered or left the vault — rotate is a pure ledger reshuffle.
+            const held = await ctx.proUSD.balanceOf(ctx.strategyVaultAddress);
+            const obligations =
+                (await ctx.strategyVault.depositProUSD()) +
+                (await ctx.strategyVault.growthProUSD()) +
+                (await ctx.strategyVault.withdrawProUSD());
+            expect(held).to.be.gte(obligations);
+        });
+
+        it("rotate supports partial settlement across multiple calls", async function () {
+            const ctx = await loadFixture(proTokenPlusFixture);
+            const user = ctx.accounts.user1;
+
+            // 300-token deposit; strategist borrows all 300; user relocks all 300 → RegivenAsync.
+            const positionId = await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS * 3n);
+            await strategistBorrow(ctx, HUNDRED_TOKENS * 3n);
+            await time.increase(Number(QUARTERLY_DURATION) + 1);
+            await ctx.proTokenPlus.connect(user).relock([positionId], HUNDRED_TOKENS * 3n, ANNUAL_TIER_ID, []);
+
+            // Repay enough to cover all 300.
+            const repayUSDC = 400n * 10n ** 6n;
+            await ctx.yAsset.mint(ctx.accounts.strategist.address, repayUSDC);
+            await strategistRepay(ctx, repayUSDC);
+
+            const depositBaseStart = await ctx.strategyVault.depositBase();
+
+            // First chunk.
+            await ctx.strategyVault.connect(ctx.accounts.operator).rotate(HUNDRED_TOKENS);
+            expect((await ctx.strategyVault.depositBase()) - depositBaseStart).to.equal(HUNDRED_TOKENS);
+
+            // Second chunk completes the settlement.
+            await ctx.strategyVault.connect(ctx.accounts.operator).rotate(HUNDRED_TOKENS * 2n);
+            expect((await ctx.strategyVault.depositBase()) - depositBaseStart).to.equal(HUNDRED_TOKENS * 3n);
+        });
+
+        it("admin can also call rotate (not just operator)", async function () {
+            const ctx = await loadFixture(proTokenPlusFixture);
+            const user = ctx.accounts.user1;
+
+            const positionId = await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
+            await strategistBorrow(ctx, HUNDRED_TOKENS);
+            await time.increase(Number(QUARTERLY_DURATION) + 1);
+            await ctx.proTokenPlus.connect(user).relock([positionId], HUNDRED_TOKENS, ANNUAL_TIER_ID, []);
+
+            const repayUSDC = 200n * 10n ** 6n;
+            await ctx.yAsset.mint(ctx.accounts.strategist.address, repayUSDC);
+            await strategistRepay(ctx, repayUSDC);
+
+            await expect(
+                ctx.strategyVault.connect(ctx.accounts.admin).rotate(HUNDRED_TOKENS),
+            ).to.emit(ctx.strategyVault, "Rotated");
+        });
+
+        it("rotate(0) reverts ZeroAmount", async function () {
+            const ctx = await loadFixture(proTokenPlusFixture);
+            await expect(
+                ctx.strategyVault.connect(ctx.accounts.operator).rotate(0n),
+            ).to.be.revertedWithCustomError(ctx.strategyVault, "ZeroAmount");
+        });
+
+        it("rotate reverts RotateUnderfunded when withdrawBase is short", async function () {
+            const ctx = await loadFixture(proTokenPlusFixture);
+            // Empty reserve; any positive worthBase should trip the base-side check.
+            await expect(
+                ctx.strategyVault.connect(ctx.accounts.operator).rotate(HUNDRED_TOKENS),
+            )
+                .to.be.revertedWithCustomError(ctx.strategyVault, "RotateUnderfunded")
+                .withArgs(HUNDRED_TOKENS, 0n);
+        });
+
+        it("rotate reverts for a non-admin/operator caller", async function () {
+            const ctx = await loadFixture(proTokenPlusFixture);
+            await expect(
+                ctx.strategyVault.connect(ctx.accounts.user1).rotate(HUNDRED_TOKENS),
+            ).to.be.revertedWithCustomError(ctx.strategyVault, "NotAdminOrOperator");
+        });
+
+        it("full sequence: deposit → borrow → async relock → repay → rotate → ledgers resync", async function () {
+            const ctx = await loadFixture(proTokenPlusFixture);
+            const user = ctx.accounts.user1;
+
+            // Deposit and immediately borrow — both sides of the vault ledger are exposed.
+            const positionId = await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
+            await strategistBorrow(ctx, HUNDRED_TOKENS);
+            expect(await ctx.strategyVault.depositBase()).to.equal(0n);
+            expect(await ctx.strategyVault.withdrawBase()).to.equal(0n);
+
+            // Async relock: totalDepositsBase stays at HUNDRED_TOKENS (source burned +
+            // new position credited), depositBase stays at 0.
+            await time.increase(Number(QUARTERLY_DURATION) + 1);
+            await ctx.proTokenPlus.connect(user).relock([positionId], HUNDRED_TOKENS, ANNUAL_TIER_ID, []);
+            expect(await ctx.proTokenPlus.totalDepositsBase()).to.equal(HUNDRED_TOKENS);
+            expect(await ctx.strategyVault.depositBase()).to.equal(0n);
+
+            // Strategist repays; withdraw reserve fills up.
+            const repayUSDC = 200n * 10n ** 6n;
+            await ctx.yAsset.mint(ctx.accounts.strategist.address, repayUSDC);
+            await strategistRepay(ctx, repayUSDC);
+            expect(await ctx.strategyVault.withdrawBase()).to.be.gte(HUNDRED_TOKENS);
+
+            // Operator rotates the pending worthBase.
+            await ctx.strategyVault.connect(ctx.accounts.operator).rotate(HUNDRED_TOKENS);
+
+            // depositBase now reflects the outstanding user position again.
+            expect(await ctx.strategyVault.depositBase()).to.equal(HUNDRED_TOKENS);
+
+            // Solvency invariant intact.
+            const held = await ctx.proUSD.balanceOf(ctx.strategyVaultAddress);
+            const obligations =
+                (await ctx.strategyVault.depositProUSD()) +
+                (await ctx.strategyVault.growthProUSD()) +
+                (await ctx.strategyVault.withdrawProUSD());
+            expect(held).to.be.gte(obligations);
         });
     });
 
