@@ -21,9 +21,9 @@ interface IStrategyVault {
     error InsufficientVaultBalance(uint256 needed, uint256 held);
     error NoYieldAvailable();
     error PriceUnavailable();
+    error RotateUnderfunded(uint256 input, uint256 withdraw);
     error YieldRecipientNotSet();
     error ExceedsClaimableYield(uint256 requested, uint256 available);
-    error RegiveUnderfunded(uint256 proUSDAmount, uint256 withdrawProUSD);
     error InsufficientDepositProUSD();
 
     // ================================================
@@ -44,6 +44,11 @@ interface IStrategyVault {
         uint256 proUSDAmount,
         uint256 worthBase
     );
+    event RegivenAsync(
+        address indexed from,
+        uint256 proUSDAmount,
+        uint256 worthBase
+    );
     event Borrowed(
         address indexed strategist,
         address indexed yAsset,
@@ -58,6 +63,11 @@ interface IStrategyVault {
         uint256 yAssetAmount,
         uint256 proUSDMinted,
         uint256 usdValue
+    );
+    event Rotated(
+        address indexed rotator, 
+        uint256 indexed proUSDAmount, 
+        uint256 indexed worthBase
     );
     event GrowthWithdrawn(
         address indexed admin,
@@ -145,6 +155,21 @@ interface IStrategyVault {
     function setProTokenPlus(address proTokenPlus) external;
     function setProTokenOperations(address proTokenOperations) external;
     function setYieldRecipient(address recipient) external;
+
+    /// @notice Shuffles worthBase from the withdraw reserve into the deposit pool,
+    ///         settling regives that were previously deferred via RegivenAsync.
+    /// @dev Only callable by admin/operator. Computes the proUSD side from
+    ///      worthBase at current lastPrice, then moves both from withdraw to deposit.
+    ///      Reverts if the withdraw reserve cannot cover either side.
+    ///
+    ///      Pricing: proUSD is derived live at rotate time, not stored from regive
+    ///      time, keeping rotate consistent with the yield ratchet.
+    ///
+    ///      Backend accounting: sum RegivenAsync.worthBase events, subtract
+    ///      Rotated.worthBase events, and pass the delta (or a portion) as worthBase.
+    ///
+    /// @param worthBase Base worth to move from withdraw pool to deposit pool.
+    function rotate(uint256 worthBase) external ;
 
     /// @notice Sweeps strategist-generated yield — proUSD held in excess of all tracked
     ///         obligations — to the fixed yieldRecipient. Permissionless trigger; funds

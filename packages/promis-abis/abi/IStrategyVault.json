@@ -86,16 +86,16 @@
     "inputs": [
       {
         "internalType": "uint256",
-        "name": "proUSDAmount",
+        "name": "input",
         "type": "uint256"
       },
       {
         "internalType": "uint256",
-        "name": "withdrawProUSD",
+        "name": "withdraw",
         "type": "uint256"
       }
     ],
-    "name": "RegiveUnderfunded",
+    "name": "RotateUnderfunded",
     "type": "error"
   },
   {
@@ -296,6 +296,31 @@
       {
         "indexed": true,
         "internalType": "address",
+        "name": "from",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "proUSDAmount",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "worthBase",
+        "type": "uint256"
+      }
+    ],
+    "name": "RegivenAsync",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
         "name": "strategist",
         "type": "address"
       },
@@ -325,6 +350,31 @@
       }
     ],
     "name": "Repaid",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "rotator",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "proUSDAmount",
+        "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "worthBase",
+        "type": "uint256"
+      }
+    ],
+    "name": "Rotated",
     "type": "event"
   },
   {
@@ -552,6 +602,19 @@
         "type": "uint256"
       }
     ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "worthBase",
+        "type": "uint256"
+      }
+    ],
+    "name": "rotate",
+    "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
   },
