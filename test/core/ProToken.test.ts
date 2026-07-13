@@ -33,6 +33,16 @@ import {
 // Uses real ProTokenSettings (deployed as UUPS proxy in the fixture) as the
 // access-control source. Upgrade tests use minimal UUPS impls with controlled
 // VERSION values to exercise _authorizeUpgrade's version check directly.
+//
+// PRICE AUTHORITY SPLIT:
+//   setUSDPrice    — ADMIN-only. Arbitrary values in {0} ∪ [1e18, ∞), including
+//                    DECREASES (the slash-markdown escape hatch) and 0 (disable).
+//   updateUSDPrice — PRICE-OPERATOR-only. Strictly increasing, step-size bounded
+//                    (stepSize 0 = unlimited), cannot run while price is disabled.
+//   setStepSize    — ADMIN-only. Bounds the priceOperator's per-update increment.
+//
+// Fixture requirements: accounts.priceOperator exists in TestAccounts, and
+// deployProTokenSettings passes it as the third initialize arg.
 // ---------------------------------------------------------------------------
 
 describe("ProToken", function () {
@@ -241,34 +251,51 @@ describe("ProToken", function () {
     });
 
     // =======================================================================
-    // setUSDPrice (operator-only)
+    // setUSDPrice (ADMIN-only, arbitrary — the escape hatch)
+    //
+    // Under the price-authority split, setUSDPrice is the admin's unconstrained
+    // path: any value in {0} ∪ [1e18, ∞), including DECREASES (used for slash
+    // markdowns) and 0 (disable). The operator is now a REJECTED caller here —
+    // routine increases go through the priceOperator's updateUSDPrice instead.
     // =======================================================================
-    describe("setUSDPrice()", function () {
-        it("operator can set price equal to MIN_USD_PRICE", async function () {
+    describe("setUSDPrice() — admin-only", function () {
+        it("admin can set price equal to MIN_USD_PRICE", async function () {
             const { proToken, accounts } = await loadFixture(proTokenFixture);
             // Move to 2e18 first, then back to MIN, to verify the second set wrote
-            await proToken.connect(accounts.operator).setUSDPrice(ethers.parseUnits("2", 18));
-            await proToken.connect(accounts.operator).setUSDPrice(MIN_USD_PRICE);
+            await proToken.connect(accounts.admin).setUSDPrice(ethers.parseUnits("2", 18));
+            await proToken.connect(accounts.admin).setUSDPrice(MIN_USD_PRICE);
             expect(await proToken.getUSDPrice()).to.equal(MIN_USD_PRICE);
         });
 
-        it("operator can set price greater than MIN_USD_PRICE", async function () {
+        it("admin can set price greater than MIN_USD_PRICE", async function () {
             const { proToken, accounts } = await loadFixture(proTokenFixture);
             const newPrice = ethers.parseUnits("1.5", 18);
-            await proToken.connect(accounts.operator).setUSDPrice(newPrice);
+            await proToken.connect(accounts.admin).setUSDPrice(newPrice);
             expect(await proToken.getUSDPrice()).to.equal(newPrice);
         });
 
-        it("operator can set a very high price", async function () {
+        it("admin can set a very high price", async function () {
             const { proToken, accounts } = await loadFixture(proTokenFixture);
             const high = ethers.parseUnits("1000000", 18);
-            await proToken.connect(accounts.operator).setUSDPrice(high);
+            await proToken.connect(accounts.admin).setUSDPrice(high);
             expect(await proToken.getUSDPrice()).to.equal(high);
+        });
+
+        it("admin can DECREASE the price (slash-markdown path)", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            const high = ethers.parseUnits("1.5", 18);
+            const markedDown = ethers.parseUnits("1.2", 18);
+
+            await proToken.connect(accounts.admin).setUSDPrice(high);
+            // Decreases are exactly what this function exists for (venue slash →
+            // honest markdown). updateUSDPrice forbids this by design.
+            await proToken.connect(accounts.admin).setUSDPrice(markedDown);
+            expect(await proToken.getUSDPrice()).to.equal(markedDown);
         });
 
         it("allows setting price to 0 (disables getUSDPrice)", async function () {
             const { proToken, accounts } = await loadFixture(proTokenFixture);
-            await proToken.connect(accounts.operator).setUSDPrice(0);
+            await proToken.connect(accounts.admin).setUSDPrice(0);
             await expect(proToken.getUSDPrice()).to.be.revertedWithCustomError(
                 proToken, ERRORS.USDPriceDisabled
             );
@@ -277,53 +304,67 @@ describe("ProToken", function () {
         it("reverts when price > 0 but < MIN_USD_PRICE (boundary)", async function () {
             const { proToken, accounts } = await loadFixture(proTokenFixture);
             await expect(
-                proToken.connect(accounts.operator).setUSDPrice(MIN_USD_PRICE - 1n)
+                proToken.connect(accounts.admin).setUSDPrice(MIN_USD_PRICE - 1n)
             ).to.be.revertedWithCustomError(proToken, ERRORS.InvalidPrice);
         });
 
         it("reverts on price = 1 wei (just above zero)", async function () {
             const { proToken, accounts } = await loadFixture(proTokenFixture);
             await expect(
-                proToken.connect(accounts.operator).setUSDPrice(1n)
+                proToken.connect(accounts.admin).setUSDPrice(1n)
             ).to.be.revertedWithCustomError(proToken, ERRORS.InvalidPrice);
         });
 
         it("emits USDPriceSet(prev, new)", async function () {
             const { proToken, accounts } = await loadFixture(proTokenFixture);
             const newPrice = ethers.parseUnits("1.1", 18);
-            await expect(proToken.connect(accounts.operator).setUSDPrice(newPrice))
+            await expect(proToken.connect(accounts.admin).setUSDPrice(newPrice))
                 .to.emit(proToken, EVENTS.USDPriceSet)
                 .withArgs(DEFAULT_USD_PRICE, newPrice);
         });
 
         it("emits USDPriceSet with new=0 when disabling", async function () {
             const { proToken, accounts } = await loadFixture(proTokenFixture);
-            await expect(proToken.connect(accounts.operator).setUSDPrice(0))
+            await expect(proToken.connect(accounts.admin).setUSDPrice(0))
                 .to.emit(proToken, EVENTS.USDPriceSet)
                 .withArgs(DEFAULT_USD_PRICE, 0);
         });
 
         it("emits USDPriceSet with prev=0 when re-enabling from disabled", async function () {
             const { proToken, accounts } = await loadFixture(proTokenFixture);
-            await proToken.connect(accounts.operator).setUSDPrice(0);
+            await proToken.connect(accounts.admin).setUSDPrice(0);
             const newPrice = ethers.parseUnits("1.5", 18);
-            await expect(proToken.connect(accounts.operator).setUSDPrice(newPrice))
+            await expect(proToken.connect(accounts.admin).setUSDPrice(newPrice))
                 .to.emit(proToken, EVENTS.USDPriceSet)
                 .withArgs(0, newPrice);
+        });
+
+        it("reverts when called by operator (previously allowed — now admin-only)", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await expect(
+                proToken.connect(accounts.operator).setUSDPrice(MIN_USD_PRICE)
+            ).to.be.revertedWithCustomError(proToken, ERRORS.NotAdmin);
+        });
+
+        it("reverts when called by priceOperator (role isolation: their path is updateUSDPrice)", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await expect(
+                proToken.connect(accounts.priceOperator).setUSDPrice(ethers.parseUnits("2", 18))
+            ).to.be.revertedWithCustomError(proToken, ERRORS.NotAdmin);
         });
 
         it("reverts when called by minter", async function () {
             const { proToken, accounts } = await loadFixture(proTokenFixture);
             await expect(
                 proToken.connect(accounts.minter).setUSDPrice(MIN_USD_PRICE)
-            ).to.be.revertedWithCustomError(proToken, ERRORS.NotAdminOrOperator);
+            ).to.be.revertedWithCustomError(proToken, ERRORS.NotAdmin);
         });
 
         it("reverts when called by random attacker", async function () {
             const { proToken, accounts } = await loadFixture(proTokenFixture);
             await expect(
                 proToken.connect(accounts.attacker).setUSDPrice(MIN_USD_PRICE)
-            ).to.be.revertedWithCustomError(proToken, ERRORS.NotAdminOrOperator);
+            ).to.be.revertedWithCustomError(proToken, ERRORS.NotAdmin);
         });
 
         it("supports full enable → disable → re-enable cycle", async function () {
@@ -331,15 +372,15 @@ describe("ProToken", function () {
             const p1 = ethers.parseUnits("1.1", 18);
             const p2 = ethers.parseUnits("1.2", 18);
 
-            await proToken.connect(accounts.operator).setUSDPrice(p1);
+            await proToken.connect(accounts.admin).setUSDPrice(p1);
             expect(await proToken.getUSDPrice()).to.equal(p1);
 
-            await proToken.connect(accounts.operator).setUSDPrice(0);
+            await proToken.connect(accounts.admin).setUSDPrice(0);
             await expect(proToken.getUSDPrice()).to.be.revertedWithCustomError(
                 proToken, ERRORS.USDPriceDisabled
             );
 
-            await proToken.connect(accounts.operator).setUSDPrice(p2);
+            await proToken.connect(accounts.admin).setUSDPrice(p2);
             expect(await proToken.getUSDPrice()).to.equal(p2);
         });
 
@@ -350,10 +391,237 @@ describe("ProToken", function () {
             const supplyBefore = await proToken.totalSupply();
             const balBefore = await proToken.balanceOf(accounts.user1.address);
 
-            await proToken.connect(accounts.operator).setUSDPrice(ethers.parseUnits("1.5", 18));
+            await proToken.connect(accounts.admin).setUSDPrice(ethers.parseUnits("1.5", 18));
 
             expect(await proToken.totalSupply()).to.equal(supplyBefore);
             expect(await proToken.balanceOf(accounts.user1.address)).to.equal(balBefore);
+        });
+    });
+
+    // =======================================================================
+    // updateUSDPrice (PRICE-OPERATOR-only, constrained — the hot path)
+    //
+    // The priceOperator's routine path: strictly increasing, step-size bounded
+    // (stepSize 0 = unlimited), and refuses to run while the price is disabled
+    // (re-enabling from 0 is an admin-only action via setUSDPrice).
+    //
+    // Validation order in the contract:
+    //   1. InvalidPrice        (_price > 0 but < 1e18)
+    //   2. USDPriceDisabled    (current price is 0)
+    //   3. PriceNotIncreasing  (_price <= current)
+    //   4. PriceStepSizeExceeded (stepSize != 0 and jump > stepSize)
+    // Tests below pin this ordering where reachable inputs overlap.
+    // =======================================================================
+    describe("updateUSDPrice() — priceOperator-only", function () {
+        it("priceOperator can increase the price (no step size configured = unlimited)", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            const newPrice = ethers.parseUnits("1.25", 18);
+            await proToken.connect(accounts.priceOperator).updateUSDPrice(newPrice);
+            expect(await proToken.getUSDPrice()).to.equal(newPrice);
+        });
+
+        it("emits USDPriceUpdated(prev, new)", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            const newPrice = ethers.parseUnits("1.1", 18);
+            await expect(proToken.connect(accounts.priceOperator).updateUSDPrice(newPrice))
+                .to.emit(proToken, EVENTS.USDPriceUpdated)
+                .withArgs(DEFAULT_USD_PRICE, newPrice);
+        });
+
+        it("supports sequential increases (each strictly above the last)", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            const p1 = ethers.parseUnits("1.05", 18);
+            const p2 = ethers.parseUnits("1.10", 18);
+            const p3 = ethers.parseUnits("1.15", 18);
+
+            await proToken.connect(accounts.priceOperator).updateUSDPrice(p1);
+            await proToken.connect(accounts.priceOperator).updateUSDPrice(p2);
+            await proToken.connect(accounts.priceOperator).updateUSDPrice(p3);
+            expect(await proToken.getUSDPrice()).to.equal(p3);
+        });
+
+        it("reverts PriceNotIncreasing when new price equals current", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await expect(
+                proToken.connect(accounts.priceOperator).updateUSDPrice(DEFAULT_USD_PRICE)
+            ).to.be.revertedWithCustomError(proToken, ERRORS.PriceNotIncreasing);
+        });
+
+        it("reverts PriceNotIncreasing when new price is lower (no markdowns on this path)", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.5", 18));
+            await expect(
+                proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.2", 18))
+            ).to.be.revertedWithCustomError(proToken, ERRORS.PriceNotIncreasing);
+        });
+
+        it("reverts PriceNotIncreasing on _price = 0 (cannot disable via this path)", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            // _price=0 passes the InvalidPrice check (0 is exempt), then fails
+            // the monotonicity check since 0 <= current. The priceOperator has
+            // no route to disabling the price.
+            await expect(
+                proToken.connect(accounts.priceOperator).updateUSDPrice(0)
+            ).to.be.revertedWithCustomError(proToken, ERRORS.PriceNotIncreasing);
+        });
+
+        it("reverts InvalidPrice when _price > 0 but < MIN_USD_PRICE (checked before monotonicity)", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            // MIN-1 is both sub-minimum AND non-increasing; InvalidPrice fires
+            // because that check runs first.
+            await expect(
+                proToken.connect(accounts.priceOperator).updateUSDPrice(MIN_USD_PRICE - 1n)
+            ).to.be.revertedWithCustomError(proToken, ERRORS.InvalidPrice);
+        });
+
+        it("reverts USDPriceDisabled when price is disabled (admin must re-enable)", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await proToken.connect(accounts.admin).setUSDPrice(0);
+
+            // Even a perfectly valid increase target is rejected while disabled:
+            // resurrecting a disabled price is an emergency-exit reversal that
+            // stays admin-only.
+            await expect(
+                proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.5", 18))
+            ).to.be.revertedWithCustomError(proToken, ERRORS.USDPriceDisabled);
+        });
+
+        it("reverts when called by admin (role isolation: their path is setUSDPrice)", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await expect(
+                proToken.connect(accounts.admin).updateUSDPrice(ethers.parseUnits("1.5", 18))
+            ).to.be.revertedWithCustomError(proToken, ERRORS.NotPriceOperator);
+        });
+
+        it("reverts when called by operator", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await expect(
+                proToken.connect(accounts.operator).updateUSDPrice(ethers.parseUnits("1.5", 18))
+            ).to.be.revertedWithCustomError(proToken, ERRORS.NotPriceOperator);
+        });
+
+        it("reverts when called by random attacker", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await expect(
+                proToken.connect(accounts.attacker).updateUSDPrice(ethers.parseUnits("1.5", 18))
+            ).to.be.revertedWithCustomError(proToken, ERRORS.NotPriceOperator);
+        });
+
+        describe("step-size enforcement", function () {
+            const STEP = ethers.parseUnits("0.1", 18); // 0.1 USD per update
+
+            it("allows a jump of exactly stepSize (boundary passes)", async function () {
+                const { proToken, accounts } = await loadFixture(proTokenFixture);
+                await proToken.connect(accounts.admin).setStepSize(STEP);
+
+                await proToken.connect(accounts.priceOperator).updateUSDPrice(
+                    DEFAULT_USD_PRICE + STEP
+                );
+                expect(await proToken.getUSDPrice()).to.equal(DEFAULT_USD_PRICE + STEP);
+            });
+
+            it("reverts PriceStepSizeExceeded on a jump of stepSize + 1 wei", async function () {
+                const { proToken, accounts } = await loadFixture(proTokenFixture);
+                await proToken.connect(accounts.admin).setStepSize(STEP);
+
+                await expect(
+                    proToken.connect(accounts.priceOperator).updateUSDPrice(
+                        DEFAULT_USD_PRICE + STEP + 1n
+                    )
+                ).to.be.revertedWithCustomError(proToken, ERRORS.PriceStepSizeExceeded);
+            });
+
+            it("step applies per-update: two sequential max-step jumps both pass", async function () {
+                const { proToken, accounts } = await loadFixture(proTokenFixture);
+                await proToken.connect(accounts.admin).setStepSize(STEP);
+
+                await proToken.connect(accounts.priceOperator).updateUSDPrice(DEFAULT_USD_PRICE + STEP);
+                await proToken.connect(accounts.priceOperator).updateUSDPrice(DEFAULT_USD_PRICE + STEP * 2n);
+                expect(await proToken.getUSDPrice()).to.equal(DEFAULT_USD_PRICE + STEP * 2n);
+            });
+
+            it("stepSize = 0 means UNLIMITED jumps (documented risk semantics)", async function () {
+                const { proToken, accounts } = await loadFixture(proTokenFixture);
+                // Default stepSize is 0 — no bound. A giant jump succeeds.
+                const giant = ethers.parseUnits("1000", 18);
+                await proToken.connect(accounts.priceOperator).updateUSDPrice(giant);
+                expect(await proToken.getUSDPrice()).to.equal(giant);
+            });
+
+            it("admin tightening stepSize immediately constrains the next update", async function () {
+                const { proToken, accounts } = await loadFixture(proTokenFixture);
+                // Unlimited jump first...
+                await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("2", 18));
+                // ...then admin bounds it; an over-step now reverts.
+                await proToken.connect(accounts.admin).setStepSize(STEP);
+                await expect(
+                    proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("3", 18))
+                ).to.be.revertedWithCustomError(proToken, ERRORS.PriceStepSizeExceeded);
+            });
+        });
+    });
+
+    // =======================================================================
+    // setStepSize (ADMIN-only)
+    // =======================================================================
+    describe("setStepSize()", function () {
+        const STEP = ethers.parseUnits("0.05", 18);
+
+        it("admin can set the step size", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await proToken.connect(accounts.admin).setStepSize(STEP);
+            // No public getter for stepSize; verify behaviorally: an over-step reverts.
+            await expect(
+                proToken.connect(accounts.priceOperator).updateUSDPrice(
+                    DEFAULT_USD_PRICE + STEP + 1n
+                )
+            ).to.be.revertedWithCustomError(proToken, ERRORS.PriceStepSizeExceeded);
+        });
+
+        it("emits StepSizeChanged(prev, new)", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await expect(proToken.connect(accounts.admin).setStepSize(STEP))
+                .to.emit(proToken, EVENTS.StepSizeChanged)
+                .withArgs(0n, STEP);
+        });
+
+        it("emits previous value on subsequent change", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await proToken.connect(accounts.admin).setStepSize(STEP);
+            await expect(proToken.connect(accounts.admin).setStepSize(STEP * 2n))
+                .to.emit(proToken, EVENTS.StepSizeChanged)
+                .withArgs(STEP, STEP * 2n);
+        });
+
+        it("can reset to 0 (removes the bound)", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await proToken.connect(accounts.admin).setStepSize(STEP);
+            await proToken.connect(accounts.admin).setStepSize(0n);
+
+            // Unlimited again: a giant jump passes.
+            await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("100", 18));
+            expect(await proToken.getUSDPrice()).to.equal(ethers.parseUnits("100", 18));
+        });
+
+        it("reverts when called by operator", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await expect(
+                proToken.connect(accounts.operator).setStepSize(STEP)
+            ).to.be.revertedWithCustomError(proToken, ERRORS.NotAdmin);
+        });
+
+        it("reverts when called by priceOperator (cannot loosen own constraint)", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await expect(
+                proToken.connect(accounts.priceOperator).setStepSize(0n)
+            ).to.be.revertedWithCustomError(proToken, ERRORS.NotAdmin);
+        });
+
+        it("reverts when called by random attacker", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await expect(
+                proToken.connect(accounts.attacker).setStepSize(STEP)
+            ).to.be.revertedWithCustomError(proToken, ERRORS.NotAdmin);
         });
     });
 
@@ -582,13 +850,13 @@ describe("ProToken", function () {
         it("getUSDPrice() returns current price", async function () {
             const { proToken, accounts } = await loadFixture(proTokenFixture);
             const p = ethers.parseUnits("1.42", 18);
-            await proToken.connect(accounts.operator).setUSDPrice(p);
+            await proToken.connect(accounts.admin).setUSDPrice(p);
             expect(await proToken.getUSDPrice()).to.equal(p);
         });
 
         it("getUSDPrice() reverts with USDPriceDisabled when price = 0", async function () {
             const { proToken, accounts } = await loadFixture(proTokenFixture);
-            await proToken.connect(accounts.operator).setUSDPrice(0);
+            await proToken.connect(accounts.admin).setUSDPrice(0);
             await expect(proToken.getUSDPrice()).to.be.revertedWithCustomError(
                 proToken, ERRORS.USDPriceDisabled
             );
@@ -821,7 +1089,7 @@ describe("ProToken", function () {
     });
 
     // =======================================================================
-    // Access control reactivity (real ProTokenSettings drives admin/operator)
+    // Access control reactivity (real ProTokenSettings drives admin/priceOperator)
     // =======================================================================
     describe("Access control reactivity", function () {
         it("admin change propagates: new admin can setMinter, old cannot", async function () {
@@ -840,18 +1108,34 @@ describe("ProToken", function () {
             expect(await proToken.getMinter()).to.equal(accounts.user2.address);
         });
 
-        it("operator change propagates: new operator can setUSDPrice, old cannot", async function () {
+        it("admin change propagates: new admin can setUSDPrice, old cannot", async function () {
             const { proToken, proTokenSettings, accounts } =
                 await loadFixture(proTokenFixture);
             const p = ethers.parseUnits("1.3", 18);
 
-            await proTokenSettings.connect(accounts.admin).setOperator(accounts.user1.address);
+            await proTokenSettings.connect(accounts.admin).proposeAdmin(accounts.user1.address);
+            await proTokenSettings.connect(accounts.user1).acceptAdmin();
 
             await expect(
-                proToken.connect(accounts.operator).setUSDPrice(p)
-            ).to.be.revertedWithCustomError(proToken, ERRORS.NotAdminOrOperator);
+                proToken.connect(accounts.admin).setUSDPrice(p)
+            ).to.be.revertedWithCustomError(proToken, ERRORS.NotAdmin);
 
             await proToken.connect(accounts.user1).setUSDPrice(p);
+            expect(await proToken.getUSDPrice()).to.equal(p);
+        });
+
+        it("priceOperator change propagates: new priceOperator can updateUSDPrice, old cannot", async function () {
+            const { proToken, proTokenSettings, accounts } =
+                await loadFixture(proTokenFixture);
+            const p = ethers.parseUnits("1.3", 18);
+
+            await proTokenSettings.connect(accounts.admin).setPriceOperator(accounts.user1.address);
+
+            await expect(
+                proToken.connect(accounts.priceOperator).updateUSDPrice(p)
+            ).to.be.revertedWithCustomError(proToken, ERRORS.NotPriceOperator);
+
+            await proToken.connect(accounts.user1).updateUSDPrice(p);
             expect(await proToken.getUSDPrice()).to.equal(p);
         });
 
@@ -1000,7 +1284,7 @@ describe("ProToken", function () {
 
         it("price disable does not affect ERC20 operations", async function () {
             const { proToken, accounts } = await loadFixture(proTokenFundedFixture);
-            await proToken.connect(accounts.operator).setUSDPrice(0);
+            await proToken.connect(accounts.admin).setUSDPrice(0);
 
             // Transfer still works
             await proToken.connect(accounts.user1).transfer(accounts.user2.address, ONE_TOKEN);
@@ -1013,6 +1297,22 @@ describe("ProToken", function () {
             await expect(proToken.getUSDPrice()).to.be.revertedWithCustomError(
                 proToken, ERRORS.USDPriceDisabled
             );
+        });
+
+        it("split-authority lifecycle: priceOperator ratchets up, admin marks down, priceOperator resumes", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+
+            // Routine appreciation via the constrained path.
+            await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.05", 18));
+            await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.10", 18));
+
+            // Slash: admin marks down (the only role that can decrease).
+            await proToken.connect(accounts.admin).setUSDPrice(ethers.parseUnits("1.02", 18));
+            expect(await proToken.getUSDPrice()).to.equal(ethers.parseUnits("1.02", 18));
+
+            // Recovery: priceOperator resumes increases from the marked-down level.
+            await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.06", 18));
+            expect(await proToken.getUSDPrice()).to.equal(ethers.parseUnits("1.06", 18));
         });
     });
 });

@@ -128,7 +128,7 @@ describe("OraclePromisPullAdaptor", function () {
     // Fixture for OraclePromisPullAdaptor tests
     async function oraclePromisPullAdaptorFixture() {
         const accounts = await getTestAccounts();
-        const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator);
+        const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator);
         const proTokenSettingsAddress = await proTokenSettings.getAddress();
 
         // Use user1 and user2 as initial signers (minimum 2 required)
@@ -198,7 +198,7 @@ describe("OraclePromisPullAdaptor", function () {
 
         it("should revert initialization with fewer than MIN_SIGNERS", async function () {
             const accounts = await getTestAccounts();
-            const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator);
+            const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator);
             const proTokenSettingsAddress = await proTokenSettings.getAddress();
 
             const OraclePromisPullAdaptorFactory = await ethers.getContractFactory("OraclePromisPullAdaptor");
@@ -224,7 +224,7 @@ describe("OraclePromisPullAdaptor", function () {
 
         it("should revert initialization with zero address signer", async function () {
             const accounts = await getTestAccounts();
-            const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator);
+            const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator);
             const proTokenSettingsAddress = await proTokenSettings.getAddress();
 
             const OraclePromisPullAdaptorFactory = await ethers.getContractFactory("OraclePromisPullAdaptor");
@@ -240,7 +240,7 @@ describe("OraclePromisPullAdaptor", function () {
 
         it("should revert initialization with duplicate signers", async function () {
             const accounts = await getTestAccounts();
-            const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator);
+            const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator);
             const proTokenSettingsAddress = await proTokenSettings.getAddress();
 
             const OraclePromisPullAdaptorFactory = await ethers.getContractFactory("OraclePromisPullAdaptor");
@@ -256,7 +256,7 @@ describe("OraclePromisPullAdaptor", function () {
 
         it("should emit SignerAdded events during initialization", async function () {
             const accounts = await getTestAccounts();
-            const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator);
+            const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator);
             const proTokenSettingsAddress = await proTokenSettings.getAddress();
 
             const OraclePromisPullAdaptorFactory = await ethers.getContractFactory("OraclePromisPullAdaptor");

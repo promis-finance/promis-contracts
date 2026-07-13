@@ -25,6 +25,7 @@ import {
     type YAssetSettings,
 } from "../helpers/deploy";
 import { getRandomAddress } from "../helpers/mocks";
+import { ZeroAddress } from "ethers";
 
 // ---------------------------------------------------------------------------
 // ProTokenSettings — unit tests
@@ -90,7 +91,7 @@ describe("ProTokenSettings", function () {
             await expect(
                 upgrades.deployProxy(
                     Factory,
-                    [ZERO_ADDRESS, accounts.operator.address],
+                    [ZERO_ADDRESS, accounts.operator.address, accounts.priceOperator.address],
                     { kind: "uups" }
                 )
             ).to.be.revertedWithCustomError(Factory, ERRORS.ZeroAddress);
@@ -103,7 +104,7 @@ describe("ProTokenSettings", function () {
             await expect(
                 upgrades.deployProxy(
                     Factory,
-                    [accounts.admin.address, ZERO_ADDRESS],
+                    [accounts.admin.address, ZERO_ADDRESS, accounts.priceOperator.address],
                     { kind: "uups" }
                 )
             ).to.be.revertedWithCustomError(Factory, ERRORS.ZeroAddress);
@@ -114,7 +115,7 @@ describe("ProTokenSettings", function () {
             await expect(
                 upgrades.deployProxy(
                     Factory,
-                    [ZERO_ADDRESS, ZERO_ADDRESS],
+                    [ZERO_ADDRESS, ZERO_ADDRESS, ZERO_ADDRESS],
                     { kind: "uups" }
                 )
             ).to.be.revertedWithCustomError(Factory, ERRORS.ZeroAddress);
@@ -127,7 +128,8 @@ describe("ProTokenSettings", function () {
             await expect(
                 proTokenSettings.initialize(
                     accounts.admin.address,
-                    accounts.operator.address
+                    accounts.operator.address,
+                    accounts.priceOperator.address
                 )
             ).to.be.revertedWithCustomError(
                 proTokenSettings,
@@ -145,7 +147,7 @@ describe("ProTokenSettings", function () {
                 implAddress
             );
             await expect(
-                impl.initialize(ZERO_ADDRESS, ZERO_ADDRESS)
+                impl.initialize(ZERO_ADDRESS, ZERO_ADDRESS, ZERO_ADDRESS)
             ).to.be.revertedWithCustomError(impl, ERRORS.InvalidInitialization);
         });
     });

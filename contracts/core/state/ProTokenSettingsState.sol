@@ -56,6 +56,9 @@ abstract contract ProTokenSettingsState {
     /// @notice Addresses authorized to sign EIP-712 proofs.
     mapping(address => bool) internal authority;
 
+    /// @notice PriceOperator role (automated multisig) for routine price update operations.
+    address internal priceOperator;
+
     /// @notice Reserved storage for future upgrades.
-    uint256[34] internal __gap;
+    uint256[33] internal __gap;
 }

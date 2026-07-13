@@ -72,7 +72,7 @@ describe("AaveV3YieldHandler", function () {
 
         it("should revert initialization with zero operations contract", async function () {
             const accounts = await getTestAccounts();
-            const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator);
+            const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator);
             const yAsset = await deployMintableERC20("Test", "TEST", DECIMALS_18);
             const mockAavePool = await deployMockAaveV3();
             const mockAToken = await deployMockAToken("aTest", "aTEST", DECIMALS_18);

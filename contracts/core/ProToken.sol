@@ -39,6 +39,9 @@ contract ProToken is
     /// @notice USD price, 18 decimals; 0 means disabled (getUSDPrice reverts).
     uint256 private usdPrice;
 
+    /// @notice Increase step size of USD price allowed (0 means steps disabled).
+    uint256 private stepSize;
+
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
@@ -76,13 +79,12 @@ contract ProToken is
         _;
     }
 
-    /// @notice Restricts access to the admin or operator.
-    modifier onlyAdminOrOperator() {
+    /// @notice Restricts access to the price operator.
+    modifier onlyPriceOperator() {
         IProTokenSettings ownerSource = IProTokenSettings(proTokenSettings);
         if (
-            msg.sender != ownerSource.getOperator() &&
-            msg.sender != ownerSource.getAdmin()
-        ) revert NotAdminOrOperator();
+            msg.sender != ownerSource.getPriceOperator()
+        ) revert NotPriceOperator();
         _;
     }
 
@@ -104,13 +106,37 @@ contract ProToken is
     }
 
     /// @inheritdoc IProToken
-    function setUSDPrice(uint256 _price) external override onlyAdminOrOperator {
+    function setUSDPrice(uint256 _price) external override onlyAdmin {
         if (_price < MIN_USD_PRICE && _price != 0) revert InvalidPrice();
 
         uint256 old = usdPrice;
         usdPrice = _price;
 
         emit USDPriceSet(old, _price);
+    }
+
+    /// @inheritdoc IProToken
+    function updateUSDPrice(uint256 _price) external override onlyPriceOperator {
+        if (_price < MIN_USD_PRICE && _price != 0) revert InvalidPrice();
+
+        uint256 old = usdPrice;
+
+        if (old == 0) revert USDPriceDisabled();
+        if (_price <= old) revert PriceNotIncreasing();
+        if (stepSize != 0 && _price - old > stepSize) revert PriceStepSizeExceeded();
+
+        usdPrice = _price;
+
+        emit USDPriceUpdated(old, _price);
+    }
+
+    /// @inheritdoc IProToken
+    function setStepSize(uint256 _stepSize) external override onlyAdmin {
+
+        uint256 old = stepSize;
+        stepSize = _stepSize;
+
+        emit StepSizeChanged(old, _stepSize);
     }
 
     /// @inheritdoc IProToken

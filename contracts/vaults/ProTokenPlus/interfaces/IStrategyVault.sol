@@ -25,6 +25,7 @@ interface IStrategyVault {
     error YieldRecipientNotSet();
     error ExceedsClaimableYield(uint256 requested, uint256 available);
     error InsufficientDepositProUSD();
+    error NotAMarkdown(uint256 livePrice, uint256 lastPrice);
 
     // ================================================
     // ==================== Events ====================
@@ -79,7 +80,8 @@ interface IStrategyVault {
     event ProTokenOperationsSet(address indexed previous, address indexed current);
     event YieldRecipientSet(address indexed previous, address indexed current);
     event YieldClaimed(address indexed caller, address indexed recipient, uint256 amount);
-
+    event PriceMarkedDown(uint256 oldPrice, uint256 newPrice, uint256 depositShortfall, uint256 withdrawShortfall);
+    event Covered(address indexed caller, uint256 toWithdrawPool, uint256 toDepositPool);
 
     // ================================================
     // ============= ProTokenPlus-only ================
@@ -170,6 +172,24 @@ interface IStrategyVault {
     ///
     /// @param worthBase Base worth to move from withdraw pool to deposit pool.
     function rotate(uint256 worthBase) external ;
+
+    /// @notice Re-anchors the yield ratchet to the current live price after admin sets
+    ///         decreasing price (e.g. backing-asset slash at an external venue).
+    ///         Any appreciation observed but not yet settled above lastPrice is deliberately 
+    ///         forfeited by the re-anchor.
+    /// @dev Call AFTER ProToken.setUSDPrice has lowered the live price. Reads the
+    ///      price itself — no parameter to fat-finger. Does NOT move tokens between
+    ///      pools; it measures and emits the per-pool token shortfalls created by
+    ///      the markdown, which the treasury feeds via cover(). Pools remain
+    ///      under-backed until cover lands, so run the full sequence under pause:
+    ///      pause → setUSDPrice → markdownPrice → cover → unpause. (Preferably in one batch)
+    function markdownPrice() external returns (uint256 depositShortfall, uint256 withdrawShortfall);
+
+    /// @notice Feed proUSD into under-backed pools after a markdown.
+    /// @dev Tokens are transferred in from the caller — this INCREASES held, unlike
+    ///      an internal reallocation. Books into the pool ledgers WITHOUT touching
+    ///      the base ledgers: the base obligations didn't change, the token backing did.
+    function cover(uint256 toWithdrawPool, uint256 toDepositPool) external;
 
     /// @notice Sweeps strategist-generated yield — proUSD held in excess of all tracked
     ///         obligations — to the fixed yieldRecipient. Permissionless trigger; funds

@@ -28,7 +28,7 @@ describe("Deployment", function () {
         console.log("----- proUSD");
 
         const ProTokenSettings = await ethers.getContractFactory("ProTokenSettings", deployer);
-        proTokenSettings = await upgrades.deployProxy(ProTokenSettings, [deployer.address, deployer.address], { kind: "uups" });
+        proTokenSettings = await upgrades.deployProxy(ProTokenSettings, [deployer.address, deployer.address, deployer.address], { kind: "uups" });
         await proTokenSettings.waitForDeployment();
         console.log(`ProTokenSettings: ${await proTokenSettings.getAddress()}`);
 

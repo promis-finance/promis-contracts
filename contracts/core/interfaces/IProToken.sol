@@ -24,10 +24,21 @@ interface IProToken {
     /// @param amount The amount of tokens to burn
     function burn(address from, uint256 amount) external;
 
-    /// @notice Sets the USD price of the pro token
-    /// @dev Only callable by the operator. Price must be normalized to 18 decimals and >= 1e18 (minimum 1 USD).
+    /// @notice Sets the USD price of the pro token arbitrarily
+    /// @dev Only callable by the admin. Price must be normalized to 18 decimals and >= 1e18 (minimum 1 USD).
     /// @param _price The USD price in 18 decimal format (e.g., 1.5 USD = 1500000000000000000)
     function setUSDPrice(uint256 _price) external;
+
+    /// @notice Sets the USD price of the pro token: subject to only increasing value and conforming to step size
+    /// @dev Only callable by the price operator. Price must be normalized to 18 decimals and >= 1e18 (minimum 1 USD).
+    ///      Reverts USDPriceDisabled if the price is currently 0.
+    /// @param _price The USD price in 18 decimal format (e.g., 1.5 USD = 1500000000000000000)
+    function updateUSDPrice(uint256 _price) external;
+
+    /// @notice Sets the step size for USD price update
+    /// @dev Only callable by admin.
+    /// @param _stepSize The USD price step size in 18 decimal format
+    function setStepSize(uint256 _stepSize) external;
 
     // ================================================
     // =========== Owner External Functions ===========
@@ -70,10 +81,20 @@ interface IProToken {
     /// @param amount The amount of tokens that were burned
     event Burned(address indexed from, uint256 amount);
 
-    /// @notice Emitted when the USD price is set
+    /// @notice Emitted when the USD price is set by Admin
     /// @param prevPrice The old USD price in 18 decimal format
     /// @param price The new USD price in 18 decimal format
     event USDPriceSet(uint256 prevPrice, uint256 price);
+
+    /// @notice Emitted when the USD price is updated by PriceOperator
+    /// @param prevPrice The old USD price in 18 decimal format
+    /// @param price The new USD price in 18 decimal format
+    event USDPriceUpdated(uint256 prevPrice, uint256 price);
+
+    /// @notice Emitted when the USD price step size was set by admin
+    /// @param prevSize The old USD price step size in 18 decimal format
+    /// @param size The new USD price step size in 18 decimal format
+    event StepSizeChanged(uint256 prevSize, uint256 size);
 
     // ================================================
     // ==================== Errors ====================
@@ -88,17 +109,20 @@ interface IProToken {
     /// @dev Unauthorized address calls admin only function
     error NotAdmin();
 
-    /// @dev Unauthorized address calls operator only function
-    error NotOperator();
-
-    /// @dev Unauthorized address calls admin or operator only function
-    error NotAdminOrOperator();
+    /// @dev Unauthorized address calls price operator only function
+    error NotPriceOperator();
 
     /// @dev Unauthorized address calls minter only function
     error NotMinter();
 
     /// @dev An invalid price is provided (must be >= 1e18)
     error InvalidPrice();
+
+    /// @dev A non-increasing price was provided
+    error PriceNotIncreasing();
+
+    /// @dev A price with exceeding step size was provided
+    error PriceStepSizeExceeded();
     
     /// @dev Zero amount is provided for mint/burn operations
     error InvalidAmount();

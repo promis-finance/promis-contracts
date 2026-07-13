@@ -321,6 +321,25 @@
       {
         "indexed": true,
         "internalType": "address",
+        "name": "previousPriceOperator",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "newPriceOperator",
+        "type": "address"
+      }
+    ],
+    "name": "PriceOperatorSet",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
         "name": "previousOperations",
         "type": "address"
       },
@@ -601,6 +620,19 @@
   },
   {
     "inputs": [],
+    "name": "getPriceOperator",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "getProTokenInfo",
     "outputs": [
       {
@@ -778,6 +810,11 @@
         "internalType": "address",
         "name": "_operator",
         "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "_priceOperator",
+        "type": "address"
       }
     ],
     "name": "initialize",
@@ -929,6 +966,19 @@
       }
     ],
     "name": "setOracleAggregationSettings",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_priceOperator",
+        "type": "address"
+      }
+    ],
+    "name": "setPriceOperator",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"

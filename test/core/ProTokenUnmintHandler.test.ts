@@ -269,7 +269,7 @@ describe("ProTokenUnmintHandler", function () {
 
         it("reverts on zero unmintBatchDuration", async function () {
             const accounts = await getTestAccounts();
-            const settings = await deployProTokenSettings(accounts.admin, accounts.operator);
+            const settings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator);
             const Factory = await ethers.getContractFactory("ProTokenUnmintHandler");
 
             await expect(

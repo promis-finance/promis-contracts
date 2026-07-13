@@ -24,6 +24,7 @@ import { DECIMALS_18, DEFAULT_UNMINT_BATCH_DURATION, ONE_USD } from "./constants
 export interface TestAccounts {
     admin: HardhatEthersSigner;
     operator: HardhatEthersSigner;
+    priceOperator: HardhatEthersSigner;
     minter: HardhatEthersSigner;
     user1: HardhatEthersSigner;
     user2: HardhatEthersSigner;
@@ -53,9 +54,9 @@ export interface YAssetSettings {
 // ============================================
 
 export async function getTestAccounts(): Promise<TestAccounts> {
-    const [admin, operator, minter, user1, user2, externalBusiness, authority, attacker, strategyVault, strategist, yieldRecipient] =
+    const [admin, operator, priceOperator, minter, user1, user2, externalBusiness, authority, attacker, strategyVault, strategist, yieldRecipient] =
         await ethers.getSigners();
-    return { admin, operator, minter, user1, user2, externalBusiness, authority, attacker, strategyVault, strategist, yieldRecipient };
+    return { admin, operator, priceOperator, minter, user1, user2, externalBusiness, authority, attacker, strategyVault, strategist, yieldRecipient };
 }
 
 // ============================================
@@ -79,12 +80,13 @@ export async function deployMintableERC20(
 
 export async function deployProTokenSettings(
     admin: HardhatEthersSigner,
-    operator: HardhatEthersSigner
+    operator: HardhatEthersSigner,
+    priceOperator: HardhatEthersSigner,
 ): Promise<ProTokenSettings> {
     const ProTokenSettingsFactory = await ethers.getContractFactory("ProTokenSettings");
     const proTokenSettings = (await upgrades.deployProxy(
         ProTokenSettingsFactory,
-        [admin.address, operator.address],
+        [admin.address, operator.address, priceOperator.address],
         { kind: "uups" }
     )) as unknown as ProTokenSettings;
     await proTokenSettings.waitForDeployment();
@@ -274,7 +276,7 @@ export async function deployFullProtocol(): Promise<FullProtocolDeployment> {
     const accounts = await getTestAccounts();
 
     // Deploy ProTokenSettings
-    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator);
+    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator, accounts.priceOperator);
     const proTokenSettingsAddress = await proTokenSettings.getAddress();
 
     // Deploy ProTokenOperations first (needed as minter)

@@ -402,7 +402,6 @@ contract StrategyVault is
     }
 
     /// @inheritdoc IStrategyVault
-    
     function claimYield(
         uint256 amount
     ) external override onlyAdminOrOperator returns (uint256 claimed) {
@@ -423,6 +422,39 @@ contract StrategyVault is
         IERC20(proToken).safeTransfer(recipient, claimed);
 
         emit YieldClaimed(msg.sender, recipient, claimed);
+    }
+
+    /// @inheritdoc IStrategyVault
+    function markdownPrice() external override onlyAdmin nonReentrant returns (uint256 depositShortfall, uint256 withdrawShortfall) {
+        uint256 livePrice = _tryGetPrice();
+        if (livePrice == 0) revert PriceUnavailable();
+        if (livePrice >= lastPrice) revert NotAMarkdown(livePrice, lastPrice);
+
+        uint256 depositNeed  = (depositBase  * USD_PRECISION) / livePrice;
+        uint256 withdrawNeed = (withdrawBase * USD_PRECISION) / livePrice;
+        depositShortfall  = depositNeed  > depositProUSD  ? depositNeed  - depositProUSD  : 0;
+        withdrawShortfall = withdrawNeed > withdrawProUSD ? withdrawNeed - withdrawProUSD : 0;
+
+        uint256 old = lastPrice;
+        lastPrice = livePrice;
+
+        emit PriceMarkedDown(old, livePrice, depositShortfall, withdrawShortfall);
+    }
+
+    /// @inheritdoc IStrategyVault
+    function cover(
+        uint256 toWithdrawPool,
+        uint256 toDepositPool
+    ) external override onlyAdminOrOperator nonReentrant {
+        uint256 total = toWithdrawPool + toDepositPool;
+        if (total == 0) revert ZeroAmount();
+
+        IERC20(proToken).safeTransferFrom(msg.sender, address(this), total);
+
+        depositProUSD  += toDepositPool;
+        withdrawProUSD += toWithdrawPool;
+
+        emit Covered(msg.sender, toWithdrawPool, toDepositPool);
     }
 
     /// @inheritdoc IStrategyVault

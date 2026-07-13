@@ -208,7 +208,7 @@ async function proTokenPlusFixture(): Promise<ProTokenPlusFixture> {
     };
 
     // --- Settings ---
-    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator);
+    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator);
     const proTokenSettingsAddress = await proTokenSettings.getAddress();
 
     // --- ProTokenOperations (must be proUSD's minter so strategicMint can mint) ---
@@ -649,7 +649,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
 
         it("reverts initialize with zero proUSD", async function () {
             const accounts = await getTestAccounts();
-            const settings = await deployProTokenSettings(accounts.admin, accounts.operator);
+            const settings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator);
             const ProTokenPlusFactory = await ethers.getContractFactory("ProTokenPlus");
             await expect(
                 upgrades.deployProxy(
@@ -662,7 +662,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
 
         it("reverts initialize when tier arrays have mismatched lengths", async function () {
             const accounts = await getTestAccounts();
-            const settings = await deployProTokenSettings(accounts.admin, accounts.operator);
+            const settings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator);
             const proUSD = await deployProToken(
                 PROTOKEN_NAME,
                 PROTOKEN_SYMBOL,
@@ -687,7 +687,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
 
         it("reverts initialize when a non-floor tier has zero duration", async function () {
             const accounts = await getTestAccounts();
-            const settings = await deployProTokenSettings(accounts.admin, accounts.operator);
+            const settings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator);
             const proUSD = await deployProToken(
                 PROTOKEN_NAME,
                 PROTOKEN_SYMBOL,
@@ -1151,7 +1151,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
         // Bump proUSD's USD price to simulate appreciation. ProToken.setUSDPrice
         // is operator-gated (per the price model); the operator drives it here.
         async function appreciate(ctx: ProTokenPlusFixture, newPrice: bigint) {
-            await ctx.proUSD.connect(ctx.accounts.operator).setUSDPrice(newPrice);
+            await ctx.proUSD.connect(ctx.accounts.admin).setUSDPrice(newPrice);
         }
 
         it("price appreciation banks freed proUSD into growthProUSD on the next interaction", async function () {

@@ -100,6 +100,22 @@
     "type": "error"
   },
   {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "livePrice",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "lastPrice",
+        "type": "uint256"
+      }
+    ],
+    "name": "NotAMarkdown",
+    "type": "error"
+  },
+  {
     "inputs": [],
     "name": "NotAdmin",
     "type": "error"
@@ -278,6 +294,31 @@
       {
         "indexed": true,
         "internalType": "address",
+        "name": "caller",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "toWithdrawPool",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "toDepositPool",
+        "type": "uint256"
+      }
+    ],
+    "name": "Covered",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
         "name": "from",
         "type": "address"
       },
@@ -333,6 +374,37 @@
       }
     ],
     "name": "Initialized",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "oldPrice",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "newPrice",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "depositShortfall",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "withdrawShortfall",
+        "type": "uint256"
+      }
+    ],
+    "name": "PriceMarkedDown",
     "type": "event"
   },
   {
@@ -698,6 +770,24 @@
     "type": "function"
   },
   {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "toWithdrawPool",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "toDepositPool",
+        "type": "uint256"
+      }
+    ],
+    "name": "cover",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
     "inputs": [],
     "name": "depositBase",
     "outputs": [
@@ -783,6 +873,24 @@
       }
     ],
     "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "markdownPrice",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "depositShortfall",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "withdrawShortfall",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
     "type": "function"
   },
   {

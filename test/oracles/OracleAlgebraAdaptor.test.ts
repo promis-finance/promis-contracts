@@ -33,7 +33,7 @@ describe("OracleAlgebraAdaptor", function () {
     // Fixture for OracleAlgebraAdaptor tests
     async function oracleAlgebraAdaptorFixture() {
         const accounts = await getTestAccounts();
-        const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator);
+        const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator);
         const proTokenSettingsAddress = await proTokenSettings.getAddress();
 
         const oracleAlgebraAdaptor = await deployOracleAlgebraAdaptor(proTokenSettingsAddress);

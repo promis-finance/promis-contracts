@@ -67,7 +67,7 @@ export interface ProTokenSettingsFixture {
  */
 export async function proTokenSettingsFixture() {
     const accounts = await getTestAccounts();
-    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator);
+    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator, accounts.priceOperator);
     const proTokenSettingsAddress = await proTokenSettings.getAddress();
 
     return {
@@ -94,7 +94,7 @@ export interface ProTokenFixture {
  */
 export async function proTokenFixture(): Promise<ProTokenFixture> {
     const accounts = await getTestAccounts();
-    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator);
+    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator, accounts.priceOperator);
     const proTokenSettingsAddress = await proTokenSettings.getAddress();
 
     // Use minter account as the minter for testing
@@ -153,7 +153,7 @@ export async function fullProtocolFixture(): Promise<FullProtocolFixture> {
     const accounts = await getTestAccounts();
 
     // Deploy ProTokenSettings
-    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator);
+    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator, accounts.priceOperator);
     const proTokenSettingsAddress = await proTokenSettings.getAddress();
 
     // Deploy ProTokenOperations first (needed as minter)
@@ -233,7 +233,7 @@ export interface OracleAlgebraFixture {
 
 export async function oracleAlgebraFixture(): Promise<OracleAlgebraFixture> {
     const accounts = await getTestAccounts();
-    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator);
+    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator, accounts.priceOperator);
     const proTokenSettingsAddress = await proTokenSettings.getAddress();
 
     const oracleAlgebraAdaptor = await deployOracleAlgebraAdaptor(proTokenSettingsAddress);
@@ -258,7 +258,7 @@ export interface OracleRedStoneFixture {
 
 export async function oracleRedStoneFixture(): Promise<OracleRedStoneFixture> {
     const accounts = await getTestAccounts();
-    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator);
+    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator, accounts.priceOperator);
     const proTokenSettingsAddress = await proTokenSettings.getAddress();
 
     const oracleRedStoneAdaptor = await deployOracleRedStoneAdaptor(proTokenSettingsAddress);
@@ -283,7 +283,7 @@ export interface OracleRedStonePushFixture {
 
 export async function oracleRedStonePushFixture(): Promise<OracleRedStonePushFixture> {
     const accounts = await getTestAccounts();
-    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator);
+    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator, accounts.priceOperator);
     const proTokenSettingsAddress = await proTokenSettings.getAddress();
 
     const oracleRedStonePushAdaptor = await deployOracleRedStonePushAdaptor(proTokenSettingsAddress);
@@ -320,7 +320,7 @@ export interface AaveV3YieldHandlerFixture {
 
 export async function aaveV3YieldHandlerFixture(): Promise<AaveV3YieldHandlerFixture> {
     const accounts = await getTestAccounts();
-    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator);
+    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator, accounts.priceOperator);
     const proTokenSettingsAddress = await proTokenSettings.getAddress();
 
     // Deploy yAsset

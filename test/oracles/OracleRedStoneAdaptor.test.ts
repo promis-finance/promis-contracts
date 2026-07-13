@@ -34,7 +34,7 @@ describe("OracleRedStoneAdaptor", function () {
     // Fixture for OracleRedStoneAdaptor tests
     async function oracleRedStoneAdaptorFixture() {
         const accounts = await getTestAccounts();
-        const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator);
+        const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator);
         const proTokenSettingsAddress = await proTokenSettings.getAddress();
 
         const oracleRedStoneAdaptor = await deployOracleRedStoneAdaptor(proTokenSettingsAddress);
