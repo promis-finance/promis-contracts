@@ -98,10 +98,25 @@ const config: HardhatUserConfig = {
       url: process.env.SEPOLIA_TESTNET_RPC || "",
       accounts: process.env.SEPOLIA_TESTNET_PRIVATE_KEY ? [process.env.SEPOLIA_TESTNET_PRIVATE_KEY] : []
     },
+    katana_testnet: {
+      chainId: 737373,
+      url: process.env.KATANA_TESTNET_RPC || "",
+      accounts: process.env.KATANA_TESTNET_PRIVATE_KEY ? [process.env.KATANA_TESTNET_PRIVATE_KEY] : []
+    },
   },
   etherscan: {
-    apiKey: process.env.ETHERSCAN
-  }
+    apiKey: process.env.ETHERSCAN,
+    customChains: [
+      {
+        network: "bokuto",
+        chainId: 737373,
+        urls: {
+          apiURL: "https://api.etherscan.io/v2/api?chainid=737373",
+          browserURL: "https://bokuto.katanascan.com",
+        },
+      },
+    ],
+  },
 };
 
 export default config;
