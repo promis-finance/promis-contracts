@@ -43,6 +43,12 @@ abstract contract StrategyVaultState {
     /// @notice Fixed admin-set sink for claimYield (permissionless trigger, fixed recipient).
     address public yieldRecipient;
 
+    /// @notice Token shortfall for deposit base obligation
+    uint256 public depositDeficit;
+
+    /// @notice Token shortfall for withdraw base obligation
+    uint256 public withdrawDeficit;
+
     /// @notice Reserved storage for future upgrades.
-    uint256[39] private __gap;
+    uint256[37] private __gap;
 }

@@ -18,6 +18,32 @@
   {
     "inputs": [
       {
+        "internalType": "uint256",
+        "name": "depositInput",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "depositRequired",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "withdrawInput",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "withdrawRequired",
+        "type": "uint256"
+      }
+    ],
+    "name": "CoverExceedsDeficit",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
         "internalType": "address",
         "name": "implementation",
         "type": "address"
@@ -300,13 +326,13 @@
       {
         "indexed": false,
         "internalType": "uint256",
-        "name": "toWithdrawPool",
+        "name": "toDepositPool",
         "type": "uint256"
       },
       {
         "indexed": false,
         "internalType": "uint256",
-        "name": "toDepositPool",
+        "name": "toWithdrawPool",
         "type": "uint256"
       }
     ],
@@ -773,12 +799,12 @@
     "inputs": [
       {
         "internalType": "uint256",
-        "name": "toWithdrawPool",
+        "name": "toDepositPool",
         "type": "uint256"
       },
       {
         "internalType": "uint256",
-        "name": "toDepositPool",
+        "name": "toWithdrawPool",
         "type": "uint256"
       }
     ],
@@ -790,6 +816,19 @@
   {
     "inputs": [],
     "name": "depositBase",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "depositDeficit",
     "outputs": [
       {
         "internalType": "uint256",
@@ -1086,6 +1125,19 @@
   {
     "inputs": [],
     "name": "withdrawBase",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "withdrawDeficit",
     "outputs": [
       {
         "internalType": "uint256",

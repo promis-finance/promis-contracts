@@ -26,6 +26,7 @@ interface IStrategyVault {
     error ExceedsClaimableYield(uint256 requested, uint256 available);
     error InsufficientDepositProUSD();
     error NotAMarkdown(uint256 livePrice, uint256 lastPrice);
+    error CoverExceedsDeficit(uint256 depositInput, uint256 depositRequired, uint256 withdrawInput, uint256 withdrawRequired);
 
     // ================================================
     // ==================== Events ====================
@@ -81,7 +82,7 @@ interface IStrategyVault {
     event YieldRecipientSet(address indexed previous, address indexed current);
     event YieldClaimed(address indexed caller, address indexed recipient, uint256 amount);
     event PriceMarkedDown(uint256 oldPrice, uint256 newPrice, uint256 depositShortfall, uint256 withdrawShortfall);
-    event Covered(address indexed caller, uint256 toWithdrawPool, uint256 toDepositPool);
+    event Covered(address indexed caller, uint256 toDepositPool, uint256 toWithdrawPool);
 
     // ================================================
     // ============= ProTokenPlus-only ================
@@ -185,11 +186,30 @@ interface IStrategyVault {
     ///      pause → setUSDPrice → markdownPrice → cover → unpause. (Preferably in one batch)
     function markdownPrice() external returns (uint256 depositShortfall, uint256 withdrawShortfall);
 
-    /// @notice Feed proUSD into under-backed pools after a markdown.
-    /// @dev Tokens are transferred in from the caller — this INCREASES held, unlike
-    ///      an internal reallocation. Books into the pool ledgers WITHOUT touching
-    ///      the base ledgers: the base obligations didn't change, the token backing did.
-    function cover(uint256 toWithdrawPool, uint256 toDepositPool) external;
+    /// @notice Feeds proUSD into pools left under-backed by a price markdown,
+    ///         capped by the deficits the last markdownPrice() recorded.
+    /// @dev Tokens are transferred in from the caller — this INCREASES held,
+    ///      unlike an internal reallocation — so the solvency invariant
+    ///      (held >= depositProUSD + growthProUSD + withdrawProUSD) is
+    ///      preserved by construction. Books into the token pools WITHOUT
+    ///      touching the base ledgers: the base obligations didn't change in
+    ///      the slash, only their token backing did.
+    ///
+    ///      Each side is capped at its recorded deficit and reverts
+    ///      CoverExceedsDeficit above it. The cap exists because excess tokens
+    ///      in depositProUSD beyond depositBase/price are UNREACHABLE — borrow
+    ///      draws at most base/price and the ratchet frees only need-deltas —
+    ///      so an uncapped over-feed would strand treasury funds permanently.
+    ///      Consequence: cover is slash-scoped, not a generic top-up hook; it
+    ///      reverts whenever no markdown has recorded a deficit. (The withdraw
+    ///      reserve's generic funding path remains repay().)
+    ///
+    ///      Partial covers are supported: the remaining deficit stays readable
+    ///      on-chain (depositDeficit / withdrawDeficit), so later tranches are
+    ///      sized from the view, no event indexing required.
+    /// @param toDepositPool proUSD to book into depositProUSD (<= depositDeficit)
+    /// @param toWithdrawPool proUSD to book into withdrawProUSD (<= withdrawDeficit)
+    function cover(uint256 toDepositPool, uint256 toWithdrawPool) external;
 
     /// @notice Sweeps strategist-generated yield — proUSD held in excess of all tracked
     ///         obligations — to the fixed yieldRecipient. Permissionless trigger; funds

@@ -36,7 +36,7 @@ import {
 // Slash markdown and cover — depeg lifecycle tests
 //
 // When backing assets are slashed at an external venue (e.g. an Aave shortfall
-// event), the runbook is (under pause, ideally
+// event on strategist-deployed funds), the runbook is (under pause, ideally
 // batched in one multisig transaction):
 //
 //   1. admin ProToken.setUSDPrice(lower)    — socialize the loss honestly;
@@ -44,7 +44,8 @@ import {
 //   2. admin vault.markdownPrice()           — re-anchor the vault's lastPrice
 //      to the live price (the monotonic ratchet never lowers it on its own)
 //      and MEASURE the per-pool token shortfalls (emits PriceMarkedDown)
-//   3. treasury vault.cover(wShort, dShort)  — feed real proUSD into the
+//   3. treasury vault.cover(dShort, wShort)  — feed real proUSD into the
+//      impaired pools, capped by the deficits markdownPrice recorded
 //      impaired pools (external recapitalization; growthProUSD is untouched)
 //
 // Key properties pinned here:
@@ -58,6 +59,9 @@ import {
 //
 // NOTE: ProToken.MIN_USD_PRICE = 1e18, so every slash scenario must first
 // appreciate above $1 (advancing the ratchet), then mark down toward $1.
+//
+// Fixture requirements: deployProTokenSettings takes (admin, operator,
+// priceOperator) under the split price-authority model.
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -443,6 +447,11 @@ describe("StrategyVault: slash markdown and cover", function () {
                 .to.emit(ctx.strategyVault, "PriceMarkedDown")
                 .withArgs(P_110, P_102, expDShort, expWShort);
 
+            // Deficits stored on-chain — the treasury sizes cover() from these
+            // (no indexer needed), and cover() enforces them as caps.
+            expect(await ctx.strategyVault.depositDeficit()).to.equal(expDShort);
+            expect(await ctx.strategyVault.withdrawDeficit()).to.equal(expWShort);
+
             // Re-anchored; pools and base ledgers UNTOUCHED by measurement.
             expect(await ctx.strategyVault.lastPrice()).to.equal(P_102);
             expect(await ctx.strategyVault.depositProUSD()).to.equal(dPool);
@@ -456,10 +465,14 @@ describe("StrategyVault: slash markdown and cover", function () {
             await ctx.proUSD.connect(admin).approve(ctx.strategyVaultAddress, total);
 
             await expect(
-                ctx.strategyVault.connect(admin).cover(expWShort, expDShort),
+                ctx.strategyVault.connect(admin).cover(expDShort, expWShort),
             )
                 .to.emit(ctx.strategyVault, "Covered")
-                .withArgs(admin.address, expWShort, expDShort);
+                .withArgs(admin.address, expDShort, expWShort);
+
+            // Deficits fully consumed.
+            expect(await ctx.strategyVault.depositDeficit()).to.equal(0n);
+            expect(await ctx.strategyVault.withdrawDeficit()).to.equal(0n);
 
             // Each pool now holds exactly what its base ledger requires at $1.02.
             expect(await ctx.strategyVault.depositProUSD()).to.equal(
@@ -526,7 +539,7 @@ describe("StrategyVault: slash markdown and cover", function () {
             // Operator covers the measured withdraw-side hole.
             await fundWithProUSD(ctx, operator.address, wShort);
             await ctx.proUSD.connect(operator).approve(ctx.strategyVaultAddress, wShort);
-            await ctx.strategyVault.connect(operator).cover(wShort, 0n);
+            await ctx.strategyVault.connect(operator).cover(0n, wShort);
             expect(await ctx.strategyVault.withdrawProUSD()).to.be.gte(payout102);
 
             // Post-cover: the same withdrawal succeeds, paid at $1.02.
@@ -564,7 +577,7 @@ describe("StrategyVault: slash markdown and cover", function () {
 
             // Treasury covers out of the growth it claimed.
             await ctx.proUSD.connect(admin).approve(ctx.strategyVaultAddress, dShort);
-            await ctx.strategyVault.connect(admin).cover(0n, dShort);
+            await ctx.strategyVault.connect(admin).cover(dShort, 0n);
             expect(await ctx.strategyVault.depositProUSD()).to.equal(
                 (B * USD_PRECISION) / P_102,
             );
@@ -624,7 +637,7 @@ describe("StrategyVault: slash markdown and cover", function () {
             await ctx.strategyVault.connect(admin).markdownPrice();
             await fundWithProUSD(ctx, admin.address, d1);
             await ctx.proUSD.connect(admin).approve(ctx.strategyVaultAddress, d1);
-            await ctx.strategyVault.connect(admin).cover(0n, d1);
+            await ctx.strategyVault.connect(admin).cover(d1, 0n);
 
             // Second slash to 1.02: shortfall measured net of the prior cover.
             await setPrice(ctx, P_102);
@@ -652,7 +665,22 @@ describe("StrategyVault: slash markdown and cover", function () {
         });
     });
 
-    describe("cover guards", function () {
+    describe("cover guards and deficit lifecycle", function () {
+        // Establish a known deficit: deposit B, ride to $1.10 (claim banks the
+        // ratchet and funds the admin for later covers), slash to $1.02,
+        // markdown. Returns the recorded per-pool deficits.
+        async function markdownWithDeficit(ctx: Ctx, B: bigint) {
+            const admin = ctx.accounts.admin;
+            await depositFor(ctx, ctx.accounts.user1, ANNUAL_TIER_ID, B);
+            await setPrice(ctx, P_110);
+            await ctx.strategyVault.connect(admin).claimGrowth(admin.address, 0n);
+            await setPrice(ctx, P_102);
+            const [dShort, wShort] = await ctx.strategyVault
+                .connect(admin).markdownPrice.staticCall();
+            await ctx.strategyVault.connect(admin).markdownPrice();
+            return { dShort, wShort };
+        }
+
         it("cover(0, 0) reverts ZeroAmount", async function () {
             const ctx = await loadFixture(slashFixture);
             await expect(
@@ -660,31 +688,125 @@ describe("StrategyVault: slash markdown and cover", function () {
             ).to.be.revertedWithCustomError(ctx.strategyVault, "ZeroAmount");
         });
 
-        it("cover from a user reverts NotAdminOrOperator", async function () {
+        it("cover from a user reverts NotAdminOrOperator (auth before deficit check)", async function () {
             const ctx = await loadFixture(slashFixture);
             await expect(
                 ctx.strategyVault.connect(ctx.accounts.user1).cover(1n, 0n),
             ).to.be.revertedWithCustomError(ctx.strategyVault, "NotAdminOrOperator");
         });
 
-        it("cover transfers exactly the sum and books each pool independently", async function () {
+        it("cover with NO recorded deficit reverts CoverExceedsDeficit (no longer a generic top-up hook)", async function () {
             const ctx = await loadFixture(slashFixture);
             const admin = ctx.accounts.admin;
-            const toW = ethers.parseEther("30");
-            const toD = ethers.parseEther("70");
+            await fundWithProUSD(ctx, admin.address, HUNDRED_TOKENS);
+            await ctx.proUSD.connect(admin).approve(ctx.strategyVaultAddress, HUNDRED_TOKENS);
 
-            await fundWithProUSD(ctx, admin.address, toW + toD);
-            await ctx.proUSD.connect(admin).approve(ctx.strategyVaultAddress, toW + toD);
+            // Deficits are 0 (no markdown has run): any positive feed exceeds
+            // them. This is the guard against stranding tokens — excess in
+            // depositProUSD above base/price is unreachable by borrow and by
+            // the ratchet.
+            await expect(
+                ctx.strategyVault.connect(admin).cover(HUNDRED_TOKENS, 0n),
+            ).to.be.revertedWithCustomError(ctx.strategyVault, "CoverExceedsDeficit");
+        });
 
+        it("cover exceeding either side's deficit reverts CoverExceedsDeficit with all four args", async function () {
+            const ctx = await loadFixture(slashFixture);
+            const admin = ctx.accounts.admin;
+            const { dShort } = await markdownWithDeficit(ctx, MIN_DEPOSIT * 10n);
+
+            await fundWithProUSD(ctx, admin.address, dShort + 1n);
+            await ctx.proUSD.connect(admin).approve(ctx.strategyVaultAddress, dShort + 1n);
+
+            // Deposit side over by 1 wei.
+            await expect(
+                ctx.strategyVault.connect(admin).cover(dShort + 1n, 0n),
+            )
+                .to.be.revertedWithCustomError(ctx.strategyVault, "CoverExceedsDeficit")
+                .withArgs(dShort + 1n, dShort, 0n, 0n);
+
+            // Withdraw side (deficit 0 here — no repay happened) over by 1 wei.
+            await expect(
+                ctx.strategyVault.connect(admin).cover(0n, 1n),
+            )
+                .to.be.revertedWithCustomError(ctx.strategyVault, "CoverExceedsDeficit")
+                .withArgs(0n, dShort, 1n, 0n);
+        });
+
+        it("partial cover decrements the deficit and books the pool; remainder stays coverable", async function () {
+            const ctx = await loadFixture(slashFixture);
+            const admin = ctx.accounts.admin;
+            const { dShort } = await markdownWithDeficit(ctx, MIN_DEPOSIT * 10n);
+
+            await fundWithProUSD(ctx, admin.address, dShort);
+            await ctx.proUSD.connect(admin).approve(ctx.strategyVaultAddress, dShort);
+
+            const half = dShort / 2n;
+            const dPoolBefore = await ctx.strategyVault.depositProUSD();
             const heldBefore = await ctx.proUSD.balanceOf(ctx.strategyVaultAddress);
-            const wBefore = await ctx.strategyVault.withdrawProUSD();
-            const dBefore = await ctx.strategyVault.depositProUSD();
 
-            await ctx.strategyVault.connect(admin).cover(toW, toD);
+            await ctx.strategyVault.connect(admin).cover(half, 0n);
 
-            expect(await ctx.proUSD.balanceOf(ctx.strategyVaultAddress)).to.equal(heldBefore + toW + toD);
-            expect(await ctx.strategyVault.withdrawProUSD()).to.equal(wBefore + toW);
-            expect(await ctx.strategyVault.depositProUSD()).to.equal(dBefore + toD);
+            expect(await ctx.strategyVault.depositProUSD()).to.equal(dPoolBefore + half);
+            expect(await ctx.strategyVault.depositDeficit()).to.equal(dShort - half);
+            expect(await ctx.proUSD.balanceOf(ctx.strategyVaultAddress)).to.equal(heldBefore + half);
+
+            // Second tranche completes it, sized straight from the on-chain view.
+            const rest = await ctx.strategyVault.depositDeficit();
+            await ctx.strategyVault.connect(admin).cover(rest, 0n);
+            expect(await ctx.strategyVault.depositDeficit()).to.equal(0n);
+        });
+
+        it("deficit is PRICE-INVARIANT: recovery accrual moves pool and need in lockstep; covering the stored figure restores exact backing", async function () {
+            const ctx = await loadFixture(slashFixture);
+            const admin = ctx.accounts.admin;
+            const B = MIN_DEPOSIT * 10n;
+            const { dShort } = await markdownWithDeficit(ctx, B);
+
+            // Price RECOVERS to $1.10 before the treasury acts, and the ratchet
+            // runs (claimGrowth triggers accrual): it frees B/1.02 − B/1.10
+            // from the still-underfunded pool into growth — pool and need drop
+            // by the same amount, so the token gap is unchanged.
+            await setPrice(ctx, P_110);
+            await ctx.strategyVault.connect(admin).claimGrowth(admin.address, 0n);
+
+            expect(await ctx.strategyVault.depositDeficit()).to.equal(dShort);
+
+            // Covering the figure measured at $1.02 restores EXACT backing at
+            // $1.10 — the stored deficit was the right cover amount at any
+            // later price. This is why on-chain storage is sound here.
+            await ctx.proUSD.connect(admin).approve(ctx.strategyVaultAddress, dShort);
+            await ctx.strategyVault.connect(admin).cover(dShort, 0n);
+
+            expect(await ctx.strategyVault.depositDeficit()).to.equal(0n);
+            expect(await ctx.strategyVault.depositProUSD()).to.equal(
+                (B * USD_PRECISION) / P_110,
+            );
+        });
+
+        it("a second markdown OVERWRITES deficits net of prior covers (self-correcting)", async function () {
+            const ctx = await loadFixture(slashFixture);
+            const admin = ctx.accounts.admin;
+            const B = MIN_DEPOSIT * 10n;
+            const { dShort: d1 } = await markdownWithDeficit(ctx, B);
+
+            // Cover only half of the first slash's hole.
+            await fundWithProUSD(ctx, admin.address, d1);
+            await ctx.proUSD.connect(admin).approve(ctx.strategyVaultAddress, d1);
+            await ctx.strategyVault.connect(admin).cover(d1 / 2n, 0n);
+
+            // Further slash to $1.00: markdown re-measures ABSOLUTELY —
+            // need at $1.00 minus the (half-covered) pool — which already
+            // includes the uncovered remainder of the first slash.
+            const P_100 = USD_PRECISION;
+            await setPrice(ctx, P_100);
+            const pool = await ctx.strategyVault.depositProUSD();
+            const expected = (B * USD_PRECISION) / P_100 - pool;
+            const [d2] = await ctx.strategyVault.connect(admin).markdownPrice.staticCall();
+            await ctx.strategyVault.connect(admin).markdownPrice();
+
+            expect(d2).to.equal(expected);
+            expect(await ctx.strategyVault.depositDeficit()).to.equal(expected);
         });
     });
 });

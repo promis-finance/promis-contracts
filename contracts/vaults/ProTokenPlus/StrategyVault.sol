@@ -435,6 +435,9 @@ contract StrategyVault is
         depositShortfall  = depositNeed  > depositProUSD  ? depositNeed  - depositProUSD  : 0;
         withdrawShortfall = withdrawNeed > withdrawProUSD ? withdrawNeed - withdrawProUSD : 0;
 
+        depositDeficit  = depositShortfall;
+        withdrawDeficit = withdrawShortfall;
+
         uint256 old = lastPrice;
         lastPrice = livePrice;
 
@@ -443,18 +446,24 @@ contract StrategyVault is
 
     /// @inheritdoc IStrategyVault
     function cover(
-        uint256 toWithdrawPool,
-        uint256 toDepositPool
+        uint256 toDepositPool,
+        uint256 toWithdrawPool
     ) external override onlyAdminOrOperator nonReentrant {
         uint256 total = toWithdrawPool + toDepositPool;
         if (total == 0) revert ZeroAmount();
 
+        if (toDepositPool > depositDeficit || toWithdrawPool > withdrawDeficit)
+            revert CoverExceedsDeficit(toDepositPool, depositDeficit, toWithdrawPool, withdrawDeficit);
+
         IERC20(proToken).safeTransferFrom(msg.sender, address(this), total);
 
-        depositProUSD  += toDepositPool;
-        withdrawProUSD += toWithdrawPool;
+        depositProUSD   += toDepositPool;
+        withdrawProUSD  += toWithdrawPool;
 
-        emit Covered(msg.sender, toWithdrawPool, toDepositPool);
+        depositDeficit  -= toDepositPool;
+        withdrawDeficit -= toWithdrawPool;
+
+        emit Covered(msg.sender, toDepositPool, toWithdrawPool);
     }
 
     /// @inheritdoc IStrategyVault
