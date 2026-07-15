@@ -113,7 +113,6 @@ contract AaveV3YieldHandler is
         if (_operationsContract == address(0)) revert InvalidAddr();
         if (_aavePool == address(0)) revert InvalidAddr();
         if (_yieldAsset == address(0)) revert InvalidAddr();
-        if (_aToken == address(0)) revert InvalidAddr();
 
         proTokenSettings = _proTokenSettings;
         operationsContract = _operationsContract;
