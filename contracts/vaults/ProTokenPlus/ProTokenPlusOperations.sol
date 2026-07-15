@@ -321,6 +321,9 @@ contract ProTokenPlusOperations is
         userUnbondingCount[caller]++;
         totalUnbonding += totalAvailable;
 
+        address strategyVault = IProTokenSettings(proTokenSettings).getStrategyVault();
+        IStrategyVault(strategyVault).earmark(request.amount);
+
         // Track active unbonding index for efficient UI queries
         activeUnbondingIndices[caller].push(unbondingIndex);
 

@@ -21,7 +21,7 @@ interface IStrategyVault {
     error InsufficientVaultBalance(uint256 needed, uint256 held);
     error NoYieldAvailable();
     error PriceUnavailable();
-    error RotateUnderfunded(uint256 input, uint256 withdraw);
+    error RotateUnderfunded(uint256 requested, uint256 available);
     error YieldRecipientNotSet();
     error ExceedsClaimableYield(uint256 requested, uint256 available);
     error InsufficientDepositProUSD();
@@ -79,7 +79,7 @@ interface IStrategyVault {
     event ProTokenOperationsSet(address indexed previous, address indexed current);
     event YieldRecipientSet(address indexed previous, address indexed current);
     event YieldClaimed(address indexed caller, address indexed recipient, uint256 amount);
-
+    event Earmarked(address indexed from, uint256 worthBase, uint256 totalEarmarked);
 
     // ================================================
     // ============= ProTokenPlus-only ================
@@ -108,6 +108,17 @@ interface IStrategyVault {
     ///      Only data needs to be updated since lockedRewards are part of principle.
     /// @param worthBase USD worth of the supposed deposit at booking time (18 decimals)
     function regive(
+        uint256 worthBase
+    ) external;
+
+    /// @notice Reserves withdraw-pool capacity for an unbonding that just started,
+    ///         protecting it from regive()/rotate() until take() settles the exit.
+    /// @dev Called by ProTokenPlus from the initiate-withdraw path with the same
+    ///      base amount the unbonding was booked at. Base-denominated so the
+    ///      commitment is price-invariant; the token cost of serving it floats
+    ///      with price and is enforced at take().
+    /// @param worthBase USD base worth of the newly initiated unbonding.
+    function earmark(
         uint256 worthBase
     ) external;
 

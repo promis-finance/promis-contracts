@@ -239,6 +239,10 @@ contract StrategyVault is
         withdrawProUSD -= proUSDAmount;
         withdrawBase = worthBase >= withdrawBase ? 0 : withdrawBase - worthBase;
 
+        earmarkedWithdrawBase = worthBase >= earmarkedWithdrawBase
+            ? 0
+            : earmarkedWithdrawBase - worthBase;
+
         IERC20(proToken).safeTransfer(proTokenPlus, proUSDAmount);
 
         emit Taken(msg.sender, proUSDAmount, worthBase);
@@ -255,7 +259,15 @@ contract StrategyVault is
 
         uint256 proUSDAmount = (worthBase * USD_PRECISION) / price;
 
-        if (proUSDAmount > withdrawProUSD || worthBase > withdrawBase) {
+        uint256 surplusBase = withdrawBase > earmarkedWithdrawBase
+            ? withdrawBase - earmarkedWithdrawBase
+            : 0;
+        uint256 surplusProUSD = (surplusBase * USD_PRECISION) / price;
+
+        if (proUSDAmount > surplusProUSD || 
+            worthBase > surplusBase ||
+            proUSDAmount > withdrawProUSD
+        ) {
             emit RegivenAsync(msg.sender, proUSDAmount, worthBase);
             return;
         }
@@ -266,6 +278,19 @@ contract StrategyVault is
         depositBase    += worthBase;
 
         emit Regiven(msg.sender, proUSDAmount, worthBase);
+    }
+
+    /// @inheritdoc IStrategyVault
+    function earmark(
+        uint256 worthBase
+    ) external override onlyProTokenPlus nonReentrant {
+        _accrueGrowth();
+
+        if (worthBase == 0) revert ZeroAmount();
+
+        earmarkedWithdrawBase += worthBase;
+
+        emit Earmarked(msg.sender, worthBase, earmarkedWithdrawBase);
     }
 
     // ================================================
@@ -365,9 +390,16 @@ contract StrategyVault is
 
         uint256 proUSDAmount = (worthBase * USD_PRECISION) / price;
 
-        if (worthBase > withdrawBase)
-            revert RotateUnderfunded(worthBase, withdrawBase);
-        if (proUSDAmount > withdrawProUSD)
+        uint256 surplusBase = withdrawBase > earmarkedWithdrawBase
+            ? withdrawBase - earmarkedWithdrawBase
+            : 0;
+        uint256 surplusProUSD = (surplusBase * USD_PRECISION) / price;
+
+        if (worthBase > surplusBase)
+            revert RotateUnderfunded(worthBase, surplusBase);
+        if (proUSDAmount > surplusProUSD)
+            revert RotateUnderfunded(proUSDAmount, surplusProUSD);
+        if (proUSDAmount > withdrawProUSD)          // markdown-window belt-and-braces
             revert RotateUnderfunded(proUSDAmount, withdrawProUSD);
 
         withdrawBase   -= worthBase;

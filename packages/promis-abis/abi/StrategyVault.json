@@ -138,12 +138,12 @@
     "inputs": [
       {
         "internalType": "uint256",
-        "name": "input",
+        "name": "requested",
         "type": "uint256"
       },
       {
         "internalType": "uint256",
-        "name": "withdraw",
+        "name": "available",
         "type": "uint256"
       }
     ],
@@ -270,6 +270,31 @@
       }
     ],
     "name": "Borrowed",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "from",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "worthBase",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "totalEarmarked",
+        "type": "uint256"
+      }
+    ],
+    "name": "Earmarked",
     "type": "event"
   },
   {
@@ -713,6 +738,32 @@
   {
     "inputs": [],
     "name": "depositProUSD",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "worthBase",
+        "type": "uint256"
+      }
+    ],
+    "name": "earmark",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "earmarkedWithdrawBase",
     "outputs": [
       {
         "internalType": "uint256",
