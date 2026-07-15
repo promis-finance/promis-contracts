@@ -52,8 +52,7 @@ contract MockOracle is IOracleAdaptor {
      * @inheritdoc IOracleAdaptor
      */
     function getOraclePriceForAsset(
-        address asset,
-        bytes calldata /* payload */
+        address asset
     ) external view override returns (uint256) {
         if (shouldRevert) {
             revert(revertMessage);

@@ -247,11 +247,6 @@
         "internalType": "address",
         "name": "asset",
         "type": "address"
-      },
-      {
-        "internalType": "bytes",
-        "name": "",
-        "type": "bytes"
       }
     ],
     "name": "getOraclePriceForAsset",

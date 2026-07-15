@@ -67,8 +67,7 @@ contract OracleChainlinkPushAdaptor is
 
     /// @inheritdoc IOracleAdaptor
     function getOraclePriceForAsset(
-        address asset,
-        bytes calldata
+        address asset
     ) external view override returns (uint256) {
         // Get push oracle configuration for asset
         address pushOracle = assetToPushOracleContract[asset];

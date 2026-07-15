@@ -337,7 +337,7 @@ describe("OracleChainlinkPushAdaptor", function () {
             await mockPushOracle.setPrice(rawPrice, currentTimestamp);
 
             // Get price
-            const price = await oracleAdaptor.getOraclePriceForAsset(testTokenAddress, "0x");
+            const price = await oracleAdaptor.getOraclePriceForAsset(testTokenAddress);
             expect(price).to.equal(expectedPrice);
         });
 
@@ -366,7 +366,7 @@ describe("OracleChainlinkPushAdaptor", function () {
             await mockPushOracle.setPrice(rawPrice, currentTimestamp);
 
             // Get price
-            const price = await oracleAdaptor.getOraclePriceForAsset(testTokenAddress, "0x");
+            const price = await oracleAdaptor.getOraclePriceForAsset(testTokenAddress);
             expect(price).to.equal(expectedPrice);
         });
 
@@ -374,7 +374,7 @@ describe("OracleChainlinkPushAdaptor", function () {
             const { oracleAdaptor } = await loadFixture(oracleChainlinkPushAdaptorFixture);
 
             await expect(
-                oracleAdaptor.getOraclePriceForAsset(getRandomAddress(), "0x")
+                oracleAdaptor.getOraclePriceForAsset(getRandomAddress())
             ).to.be.revertedWithCustomError(oracleAdaptor, ERRORS.AssetOracleMappingNotFound);
         });
 
@@ -402,7 +402,7 @@ describe("OracleChainlinkPushAdaptor", function () {
             await mockPushOracle.setPrice(price, staleTimestamp);
 
             await expect(
-                oracleAdaptor.getOraclePriceForAsset(testTokenAddress, "0x")
+                oracleAdaptor.getOraclePriceForAsset(testTokenAddress)
             ).to.be.revertedWithCustomError(oracleAdaptor, ERRORS.StaleOracleData);
         });
 
@@ -430,7 +430,7 @@ describe("OracleChainlinkPushAdaptor", function () {
             await mockPushOracle.setPrice(price, futureTimestamp);
 
             await expect(
-                oracleAdaptor.getOraclePriceForAsset(testTokenAddress, "0x")
+                oracleAdaptor.getOraclePriceForAsset(testTokenAddress)
             ).to.be.revertedWithCustomError(oracleAdaptor, ERRORS.FutureOracleTimestamp);
         });
 
@@ -457,7 +457,7 @@ describe("OracleChainlinkPushAdaptor", function () {
             await mockPushOracle.setPrice(0, currentTimestamp);
 
             await expect(
-                oracleAdaptor.getOraclePriceForAsset(testTokenAddress, "0x")
+                oracleAdaptor.getOraclePriceForAsset(testTokenAddress)
             ).to.be.revertedWithCustomError(oracleAdaptor, ERRORS.InvalidOraclePrice);
         });
 
@@ -489,7 +489,7 @@ describe("OracleChainlinkPushAdaptor", function () {
             await mockPushOracle.setPrice(price, staleTimestamp);
 
             await expect(
-                oracleAdaptor.getOraclePriceForAsset(testTokenAddress, "0x")
+                oracleAdaptor.getOraclePriceForAsset(testTokenAddress)
             ).to.be.revertedWithCustomError(oracleAdaptor, ERRORS.StaleOracleData);
         });
     });

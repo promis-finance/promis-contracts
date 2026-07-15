@@ -908,10 +908,7 @@ contract ProTokenOperations is
 
             // Revert if any oracle fails - this is critical for security
             // All configured oracles must be operational for multi-oracle security to work
-            uint256 price = IOracleAdaptor(_oracles[i]).getOraclePriceForAsset(
-                _asset,
-                ""
-            );
+            uint256 price = IOracleAdaptor(_oracles[i]).getOraclePriceForAsset(_asset);
 
             if (price == 0) {
                 revert InvalidOraclePrice(_oracles[i]);
