@@ -183,8 +183,7 @@ interface IStrategyVault {
     function rotate(uint256 worthBase) external ;
 
     /// @notice Sweeps strategist-generated yield — proUSD held in excess of all tracked
-    ///         obligations — to the fixed yieldRecipient. Permissionless trigger; funds
-    ///         only ever go to the admin-set recipient.
+    ///         obligations — to the fixed yieldRecipient.
     /// @dev Does NOT touch depositProUSD, growthProUSD. The claimable
     ///      surplus is added to withdrawProUSD on repay:
     ///        held − (depositProUSD + growthProUSD)
