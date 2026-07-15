@@ -220,9 +220,10 @@ contract AaveV3YieldHandler is
         if (_yieldAsset == address(0)) revert InvalidAddr();
 
         address aTokenAddress = _getATokenAddress();
-        if (aTokenAddress != address(0)) {
-            uint256 balance = IAToken(aTokenAddress).balanceOf(address(this));
-            if (balance > 0) revert InsufficientBalance();
+        if (aTokenAddress != address(0) && aTokenAddress.code.length > 0) {
+            try IAToken(aTokenAddress).balanceOf(address(this)) returns (uint256 bal) {
+                if (bal > 0) revert InsufficientBalance();
+            } catch {}
         }
 
         yieldAsset = _yieldAsset;
@@ -238,9 +239,10 @@ contract AaveV3YieldHandler is
         if (_aavePool == address(0)) revert InvalidAddr();
 
         address aTokenAddress = _getATokenAddress();
-        if (aTokenAddress != address(0)) {
-            uint256 balance = IAToken(aTokenAddress).balanceOf(address(this));
-            if (balance > 0) revert InsufficientBalance();
+        if (aTokenAddress != address(0) && aTokenAddress.code.length > 0) {
+            try IAToken(aTokenAddress).balanceOf(address(this)) returns (uint256 bal) {
+                if (bal > 0) revert InsufficientBalance();
+            } catch {}
         }
 
         aavePool = _aavePool;
@@ -253,6 +255,12 @@ contract AaveV3YieldHandler is
      * @param _aToken Address of the aToken linked to the current yield asset
      */
     function setAToken(address _aToken) external onlyAdmin {
+        address aTokenAddress = _getATokenAddress();
+        if (aTokenAddress != address(0) && aTokenAddress.code.length > 0) {
+            try IAToken(aTokenAddress).balanceOf(address(this)) returns (uint256 bal) {
+                if (bal > 0) revert InsufficientBalance();
+            } catch {}
+        }
         _updateAToken(_aToken);
     }
 
