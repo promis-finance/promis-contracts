@@ -17,7 +17,7 @@ abstract contract OracleChainlinkPushAdaptorState {
     mapping(address => uint8) public assetToPriceDecimals;
 
     /// @notice Maximum allowed staleness for oracle data in seconds
-    uint256 public stalenessThreshold;
+    mapping(address => uint256) public stalenessThreshold;
 
     /**
      * @dev Reserved storage space for future upgrades

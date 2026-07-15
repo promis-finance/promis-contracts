@@ -64,6 +64,12 @@
     "inputs": [
       {
         "indexed": false,
+        "internalType": "address",
+        "name": "asset",
+        "type": "address"
+      },
+      {
+        "indexed": false,
         "internalType": "uint256",
         "name": "threshold",
         "type": "uint256"
@@ -116,6 +122,11 @@
   },
   {
     "inputs": [
+      {
+        "internalType": "address",
+        "name": "asset",
+        "type": "address"
+      },
       {
         "internalType": "uint256",
         "name": "threshold",

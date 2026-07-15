@@ -63,11 +63,11 @@ describe("OracleChainlinkPushAdaptor", function () {
     // ============================================
     describe("Deployment & Initialization", function () {
         it("should deploy with correct initial state", async function () {
-            const { oracleAdaptor } =
+            const { oracleAdaptor, proTokenSettings} =
                 await loadFixture(oracleChainlinkPushAdaptorFixture);
 
             // Default staleness threshold is 86400 seconds (24 hours)
-            expect(await oracleAdaptor.stalenessThreshold()).to.equal(DEFAULT_STALENESS);
+            expect(await oracleAdaptor.proTokenSettings()).to.equal(await proTokenSettings.getAddress());
         });
 
         it("should have correct VERSION constant", async function () {
@@ -285,17 +285,17 @@ describe("OracleChainlinkPushAdaptor", function () {
             const newThreshold = 7200; // 2 hours
 
             await expect(
-                oracleAdaptor.connect(accounts.admin).setStalenessThreshold(newThreshold)
+                oracleAdaptor.connect(accounts.admin).setStalenessThreshold(accounts.admin.address, newThreshold)
             ).to.emit(oracleAdaptor, EVENTS.StalenessThresholdUpdated);
 
-            expect(await oracleAdaptor.stalenessThreshold()).to.equal(newThreshold);
+            expect(await oracleAdaptor.stalenessThreshold(accounts.admin.address)).to.equal(newThreshold);
         });
 
         it("should revert with zero threshold", async function () {
             const { oracleAdaptor, accounts } = await loadFixture(oracleChainlinkPushAdaptorFixture);
 
             await expect(
-                oracleAdaptor.connect(accounts.admin).setStalenessThreshold(0)
+                oracleAdaptor.connect(accounts.admin).setStalenessThreshold(accounts.admin.address, 0)
             ).to.be.revertedWithCustomError(oracleAdaptor, ERRORS.InvalidInputs);
         });
 
@@ -303,7 +303,7 @@ describe("OracleChainlinkPushAdaptor", function () {
             const { oracleAdaptor, accounts } = await loadFixture(oracleChainlinkPushAdaptorFixture);
 
             await expect(
-                oracleAdaptor.connect(accounts.operator).setStalenessThreshold(7200)
+                oracleAdaptor.connect(accounts.operator).setStalenessThreshold(accounts.admin.address, 7200)
             ).to.be.revertedWithCustomError(oracleAdaptor, ERRORS.Unauthorized);
         });
     });
@@ -482,7 +482,7 @@ describe("OracleChainlinkPushAdaptor", function () {
             );
 
             // Set custom staleness threshold
-            await oracleAdaptor.connect(accounts.admin).setStalenessThreshold(customThreshold);
+            await oracleAdaptor.connect(accounts.admin).setStalenessThreshold(testTokenAddress, customThreshold);
 
             // Set price that would be valid with default threshold but stale with custom
             const staleTimestamp = (await time.latest()) - customThreshold - 100;
@@ -531,8 +531,21 @@ describe("OracleChainlinkPushAdaptor", function () {
     // ============================================
     describe("View Functions", function () {
         it("stalenessThreshold should return correct threshold", async function () {
-            const { oracleAdaptor } = await loadFixture(oracleChainlinkPushAdaptorFixture);
-            expect(await oracleAdaptor.stalenessThreshold()).to.equal(DEFAULT_STALENESS);
+            const { 
+                oracleAdaptor, 
+                accounts, 
+                mockPushOracleAddress,
+                testTokenAddress
+            } = await loadFixture(oracleChainlinkPushAdaptorFixture);
+            
+            const priceDecimals = 8;
+
+            await oracleAdaptor.connect(accounts.admin).setAssetToPushOracleMappings(
+                [testTokenAddress],
+                [mockPushOracleAddress],
+                [priceDecimals]
+            );
+            expect(await oracleAdaptor.stalenessThreshold(testTokenAddress)).to.equal(DEFAULT_STALENESS);
         });
 
         it("assetToPushOracleContract should return correct mapping", async function () {
