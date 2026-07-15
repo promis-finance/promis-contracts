@@ -165,7 +165,7 @@ contract MorphoYieldHandler is
             msg.sender
         );
 
-        if (assetsWithdrawn < amount) revert WithdrawFailed();
+        if (assetsWithdrawn < amountToWithdrawAssets) revert WithdrawFailed();
 
         emit YieldAssetWithdrawn(amount, assetsWithdrawn, block.timestamp);
         return assetsWithdrawn;
