@@ -83,15 +83,13 @@ contract OracleChainlinkPushAdaptor is
 
         if (price == 0) revert InvalidOraclePrice();
 
-        // Check staleness
-        uint256 timestampSeconds = updatedAt;
-
         // Guard against future timestamps (clock skew / buggy oracle)
-        if (timestampSeconds > block.timestamp) {
+        if (updatedAt > block.timestamp) {
             revert FutureOracleTimestamp();
         }
 
-        if (block.timestamp - timestampSeconds > stalenessThreshold) {
+        // Check staleness
+        if (block.timestamp - updatedAt > stalenessThreshold) {
             revert StaleOracleData();
         }
 
