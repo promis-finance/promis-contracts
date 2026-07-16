@@ -184,6 +184,7 @@ interface IYAssetOperationsHandler {
     error ZeroAddress();
     error ZeroAmount();
     error NoHandlers();
+    error AssetNotReceived();
     error Unauthorized();
     error InvalidAllocation();
     error ProtocolHandlerNotFound();
@@ -191,4 +192,5 @@ interface IYAssetOperationsHandler {
     error ArrayLengthMismatch();
     error WithdrawFailed();
     error Paused();
+    error HandlerAssetMismatch(address handler);
 }

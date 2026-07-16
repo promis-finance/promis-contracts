@@ -53,6 +53,11 @@
   },
   {
     "inputs": [],
+    "name": "HandlerAssetMismatch",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "InvalidInitialization",
     "type": "error"
   },

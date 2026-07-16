@@ -93,7 +93,9 @@ contract YAssetOperationsHandler is
             IProTokenSettings(proTokenSettings)
                 .getProTokenInfo()
                 .proTokenOperations
-        ) {} else if (
+        ) {
+            if (IERC20(yAsset).balanceOf(address(this)) < _amount) revert AssetNotReceived();
+        } else if (
             msg.sender ==
             IProTokenSettings(proTokenSettings).getExternalBusiness() ||
             msg.sender == IProTokenSettings(proTokenSettings).getOperator() ||
@@ -335,6 +337,9 @@ contract YAssetOperationsHandler is
         for (uint256 i = 0; i < handlersLength; i++) {
             address handlerAddr = _handlers[i];
             uint256 allocation = _allocations[i];
+
+            if (IYieldProtocolHandler(handlerAddr).getYieldAsset() != yAsset)
+                revert HandlerAssetMismatch(handlerAddr);
 
             isProtocolHandler[handlerAddr] = true;
 

@@ -1044,11 +1044,15 @@ describe("ProTokenSettings", function () {
             const yAsset = await deployMintableERC20("Test", "T", DECIMALS_18);
             const yAssetAddress = await yAsset.getAddress();
 
-            const fakeHandler = await deployMintableERC20("Fake", "F", DECIMALS_18);
-            const settings = createDefaultYAssetSettings(await fakeHandler.getAddress());
+            const handler = await deployYAssetOperationsHandler(await proTokenSettings.getAddress(), yAssetAddress);       
+            const settings = createDefaultYAssetSettings(await handler.getAddress());
             await proTokenSettings
                 .connect(accounts.admin)
                 .setYAsset(yAssetAddress, settings);
+            
+            const venue = await (await ethers.getContractFactory("MockYieldProtocolHandler")).deploy(yAssetAddress);                       // answers identity correctly
+            await handler.connect(accounts.admin).setYProtocolHandlers([await venue.getAddress()], [10000n]);  // passes the venue identity check
+            await venue.setBroken(true);
 
             await expect(
                 proTokenSettings.connect(accounts.admin).removeYAsset(yAssetAddress)

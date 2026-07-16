@@ -400,4 +400,5 @@ interface IProTokenSettings {
     error YAssetNotFound(address yAsset);
     error YAssetInUseForUnmint(address yAsset);
     error YOperationsHandlerInUseBalanceNotZero();
+    error HandlerAssetMismatch();
 }

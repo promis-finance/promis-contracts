@@ -156,7 +156,7 @@ contract ProTokenSettings is
             (_settings.priceSettings.staticPriceSource == 0 &&
                 _settings.priceSettings.oraclePriceSources.length == 0)
         ) revert ZeroSources();
-
+        
         // Assign other settings
         storageSettings.isEnabled = _settings.isEnabled;
         storageSettings.isPaused = _settings.isPaused;
@@ -177,6 +177,9 @@ contract ProTokenSettings is
                 _settings.priceSettings.oraclePriceSources[i]
             );
         }
+
+        if (IYAssetOperationsHandler(_settings.yOperationsHandler).getYAsset() != _yAsset)
+            revert HandlerAssetMismatch();
         
         storageSettings.priceSettings.usdCap = _settings
             .priceSettings

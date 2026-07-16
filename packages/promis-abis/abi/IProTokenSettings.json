@@ -6,6 +6,11 @@
   },
   {
     "inputs": [],
+    "name": "HandlerAssetMismatch",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "LengthMismatch",
     "type": "error"
   },
