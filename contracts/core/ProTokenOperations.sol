@@ -410,8 +410,16 @@ contract ProTokenOperations is
         IYAssetOperationsHandler yOps =
             IYAssetOperationsHandler(yAssetSettings.settings.yOperationsHandler);
 
+        bool paidInstant;
         if (yOps.previewPayOut(yAssetToReceiveAmount)) {
-            yOps.payOut(_recipient, yAssetToReceiveAmount);
+            try yOps.payOut(_recipient, yAssetToReceiveAmount) {
+                paidInstant = true;
+            } catch {
+                // fall through to the queue path below
+            }
+        }
+
+        if (paidInstant) {
             emit ProTokenUnmintInstant(
                 _sender,
                 _recipient,
@@ -423,6 +431,7 @@ contract ProTokenOperations is
             uint256 handlerRequestId = IProTokenUnmintHandler(
                 proTokenInfo.proTokenUnmintHandler
             ).createUnmintRequest(_recipient, _yAsset, yAssetToReceiveAmount);
+
             emit ProTokenUnmintQueued(
                 _sender,
                 _recipient,
@@ -544,8 +553,17 @@ contract ProTokenOperations is
         IYAssetOperationsHandler yOps =
             IYAssetOperationsHandler(yAssetSettings.settings.yOperationsHandler);
 
+        bool paidInstant;
         if (yOps.previewPayOut(yAssetReceived)) {
-            yOps.payOut(_destination, yAssetReceived);
+            try yOps.payOut(_destination, yAssetReceived) {
+                paidInstant = true;
+            } catch {
+                // fall through to the queue path below
+            }
+            
+        } 
+        
+        if (paidInstant) {
             emit StrategicUnmintInstant(
                 msg.sender,
                 _yAsset,
@@ -557,6 +575,7 @@ contract ProTokenOperations is
             uint256 handlerRequestId = IProTokenUnmintHandler(
                 proTokenInfo.proTokenUnmintHandler
             ).createUnmintRequest(_destination, _yAsset, yAssetReceived);
+
             emit StrategicUnmintQueued(
                 msg.sender,
                 _yAsset,
