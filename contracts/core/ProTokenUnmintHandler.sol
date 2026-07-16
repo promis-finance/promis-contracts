@@ -175,7 +175,7 @@ contract ProTokenUnmintHandler is
         // Open a new batch if the current one is processed, expired, or none exists yet.
         if (
             curBatch.processed ||
-            curBatch.createTimestamp + unmintBatchDuration < block.timestamp ||
+            curBatch.createTimestamp + unmintBatchDuration <= block.timestamp ||
             curBatchId == 0
         ) {
             unchecked { curBatchId = ++curUnmintBatchIdPerYAsset[yAsset]; }
