@@ -36,7 +36,7 @@ interface IProTokenSettings {
     /**
      * @notice Updates the operator address that can perform operational functions
      * @dev The operator has limited privileges compared to admin, typically for routine
-     *      operations like updating LST ratios without requiring full admin access.
+     *      operations.
      * @param _operator Address of the new operator
      */
     function setOperator(address _operator) external;

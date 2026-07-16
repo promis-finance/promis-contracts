@@ -863,7 +863,9 @@ contract ProTokenOperations is
                 _proToken,
                 oracles
             ); // come always as 18 decimals
-
+            if (usdRepresentation.assetUSD < USD_PRECISION)
+                revert OraclePriceBelowMin(usdRepresentation.assetUSD);
+                
             usdRepresentation.assetAmountUSD =
                 (_amount * usdRepresentation.assetUSD) /
                 (10 ** _decimals); // come as 18 decimals
