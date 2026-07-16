@@ -956,6 +956,13 @@ contract ProTokenOperations is
             return; // No deviation check configured
         }
 
+        uint256 minPrice = prices[0];
+        uint256 maxPrice = prices[length - 1];
+        uint256 spread = ((maxPrice - minPrice) * PERCENTAGE_PRECISION) / minPrice;
+        if (spread > settings.maxPriceDeviation) {
+            revert OraclePriceDeviation(spread, settings.maxPriceDeviation);
+        }
+        
         for (uint256 i = 0; i < length; i++) {
             uint256 deviation;
             if (prices[i] > medianPrice) {
