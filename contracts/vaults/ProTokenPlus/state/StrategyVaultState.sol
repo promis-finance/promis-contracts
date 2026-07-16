@@ -46,6 +46,12 @@ abstract contract StrategyVaultState {
     /// @notice Base denominated worth commited to ACTIVE unbonding oligations.
     uint256 public earmarkedWithdrawBase;
 
+    /// @notice Token shortfall for deposit base obligation
+    uint256 public depositDeficit;
+
+    /// @notice Token shortfall for withdraw base obligation
+    uint256 public withdrawDeficit;
+
     /// @notice Reserved storage for future upgrades.
-    uint256[38] private __gap;
+    uint256[36] private __gap;
 }

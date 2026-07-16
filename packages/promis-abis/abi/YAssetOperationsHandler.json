@@ -26,6 +26,11 @@
     "type": "error"
   },
   {
+    "inputs": [],
+    "name": "DuplicateHandler",
+    "type": "error"
+  },
+  {
     "inputs": [
       {
         "internalType": "address",

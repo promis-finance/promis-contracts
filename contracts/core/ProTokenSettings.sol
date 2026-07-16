@@ -38,13 +38,14 @@ contract ProTokenSettings is
         _disableInitializers();
     }
 
-    function initialize(address _admin, address _operator) public initializer {
+    function initialize(address _admin, address _operator, address _priceOperator) public initializer {
         __Pausable_init();
         __UUPSUpgradeable_init();
-        if (_admin == address(0) || _operator == address(0))
+        if (_admin == address(0) || _operator == address(0) || _priceOperator == address(0))
             revert ZeroAddress();
         admin = _admin;
         operator = _operator;
+        priceOperator = _priceOperator;
     }
 
     modifier onlyAdmin() {
@@ -78,6 +79,14 @@ contract ProTokenSettings is
         address previousOperator = operator;
         operator = _operator;
         emit OperatorSet(previousOperator, _operator);
+    }
+
+    /// @inheritdoc IProTokenSettings
+    function setPriceOperator(address _priceOperator) external override onlyAdmin {
+        if (_priceOperator == address(0)) revert ZeroAddress();
+        address previous = priceOperator;
+        priceOperator = _priceOperator;
+        emit PriceOperatorSet(previous, _priceOperator);
     }
 
     /// @inheritdoc IProTokenSettings
@@ -296,6 +305,11 @@ contract ProTokenSettings is
     /// @inheritdoc IProTokenSettings
     function getOperator() external view override returns (address) {
         return operator;
+    }
+
+    /// @inheritdoc IProTokenSettings
+    function getPriceOperator() external view override returns (address) {
+        return priceOperator;
     }
 
     /// @inheritdoc IProTokenSettings

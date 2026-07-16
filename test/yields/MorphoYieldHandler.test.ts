@@ -49,7 +49,7 @@ describe("MorphoYieldHandler", function () {
     // Fixture for MorphoYieldHandler tests
     async function morphoYieldHandlerFixture() {
         const accounts = await getTestAccounts();
-        const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator);
+        const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator);
         const proTokenSettingsAddress = await proTokenSettings.getAddress();
 
         // Deploy mock Morpho
@@ -126,7 +126,7 @@ describe("MorphoYieldHandler", function () {
 
         it("should revert initialization with zero operationsContract", async function () {
             const accounts = await getTestAccounts();
-            const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator);
+            const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator);
             const mockMorpho = await deployMockMorpho();
             const yieldAsset = await deployMintableERC20("YLD", "YLD", DECIMALS_18);
             const marketParams = createDefaultMarketParams(await yieldAsset.getAddress());
@@ -144,7 +144,7 @@ describe("MorphoYieldHandler", function () {
 
         it("should revert initialization with zero morphoCoreContract", async function () {
             const accounts = await getTestAccounts();
-            const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator);
+            const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator);
             const yieldAsset = await deployMintableERC20("YLD", "YLD", DECIMALS_18);
             const marketParams = createDefaultMarketParams(await yieldAsset.getAddress());
 

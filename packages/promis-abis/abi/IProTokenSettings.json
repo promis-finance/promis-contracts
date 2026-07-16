@@ -216,6 +216,25 @@
       {
         "indexed": true,
         "internalType": "address",
+        "name": "previousPriceOperator",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "newPriceOperator",
+        "type": "address"
+      }
+    ],
+    "name": "PriceOperatorSet",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
         "name": "previousOperations",
         "type": "address"
       },
@@ -424,6 +443,19 @@
         "internalType": "struct ProTokenOperationsTypes.OracleAggregationSettings",
         "name": "settings",
         "type": "tuple"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "getPriceOperator",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "priceOperator",
+        "type": "address"
       }
     ],
     "stateMutability": "view",
@@ -703,6 +735,19 @@
       }
     ],
     "name": "setOracleAggregationSettings",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_priceOperator",
+        "type": "address"
+      }
+    ],
+    "name": "setPriceOperator",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"

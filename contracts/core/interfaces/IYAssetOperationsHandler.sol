@@ -193,4 +193,5 @@ interface IYAssetOperationsHandler {
     error WithdrawFailed();
     error Paused();
     error HandlerAssetMismatch(address handler);
+    error DuplicateHandler();
 }
