@@ -30,6 +30,9 @@ contract ProTokenSettings is
     /// @notice Maximum allowed price deviation for oracle aggregation (100% = 10000 basis points)
     uint256 public constant MAX_PRICE_DEVIATION_BPS = 10000;
 
+    /// @notice Maximum allowed unmint fee in WAD
+    uint256 public constant MAX_UNMINT_FEE = 1e17; // 10%
+
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
@@ -146,6 +149,7 @@ contract ProTokenSettings is
     ) external override onlyAdmin {
         if (_yAsset == address(0)) revert ZeroAddress();
         if (_settings.yOperationsHandler == address(0)) revert ZeroAddress();
+        if (_settings.unmintFeePer > MAX_UNMINT_FEE) revert MaxFeeExceeded();
         yAssets.add(_yAsset);
 
         // Cache storage pointer

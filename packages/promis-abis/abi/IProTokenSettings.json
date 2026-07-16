@@ -16,6 +16,11 @@
   },
   {
     "inputs": [],
+    "name": "MaxFeeExceeded",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "NoYAssetsFound",
     "type": "error"
   },

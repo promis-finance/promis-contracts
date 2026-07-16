@@ -386,6 +386,7 @@ interface IProTokenSettings {
     // ================================================
 
     error ZeroAddress();
+    error MaxFeeExceeded();
     error NotAdmin();
     error NotAdminOrOperator();
     error LengthMismatch();

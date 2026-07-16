@@ -68,6 +68,11 @@
   },
   {
     "inputs": [],
+    "name": "MaxFeeExceeded",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "NoYAssetsFound",
     "type": "error"
   },
@@ -502,6 +507,19 @@
   {
     "inputs": [],
     "name": "MAX_PRICE_DEVIATION_BPS",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "MAX_UNMINT_FEE",
     "outputs": [
       {
         "internalType": "uint256",
