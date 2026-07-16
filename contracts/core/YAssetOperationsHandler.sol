@@ -341,6 +341,7 @@ contract YAssetOperationsHandler is
             if (IYieldProtocolHandler(handlerAddr).getYieldAsset() != yAsset)
                 revert HandlerAssetMismatch(handlerAddr);
 
+            if (isProtocolHandler[handlerAddr]) revert DuplicateHandler();
             isProtocolHandler[handlerAddr] = true;
 
             protocolHandlers.push(
