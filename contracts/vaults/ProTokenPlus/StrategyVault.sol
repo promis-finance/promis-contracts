@@ -437,7 +437,7 @@ contract StrategyVault is
     
     function claimYield(
         uint256 amount
-    ) external override onlyAdminOrOperator returns (uint256 claimed) {
+    ) external override onlyAdminOrOperator nonReentrant returns (uint256 claimed) {
         _accrueGrowth();
 
         if (amount == 0) revert ZeroAmount();
@@ -445,13 +445,27 @@ contract StrategyVault is
         address recipient = yieldRecipient;
         if (recipient == address(0)) revert YieldRecipientNotSet();
 
+        uint256 price = lastPrice;
+        if (price == 0) revert PriceUnavailable();  
+
         uint256 obligations = depositProUSD + growthProUSD;
         uint256 held = IERC20(proToken).balanceOf(address(this));
         uint256 available = held > obligations ? held - obligations : 0;
 
         if (amount > available) revert ExceedsClaimableYield(amount, available);
 
+        uint256 worthBase = (amount * price) / USD_PRECISION;
+        uint256 surplusBase = withdrawBase > earmarkedWithdrawBase
+            ? withdrawBase - earmarkedWithdrawBase : 0;
+        
+        if (worthBase > surplusBase)
+            revert ExceedsClaimableYield(amount, (surplusBase * USD_PRECISION) / price);
+
         claimed = amount;
+
+        withdrawProUSD = claimed >= withdrawProUSD ? 0 : withdrawProUSD - claimed;
+        withdrawBase   = worthBase >= withdrawBase ? 0 : withdrawBase - worthBase;
+
         IERC20(proToken).safeTransfer(recipient, claimed);
 
         emit YieldClaimed(msg.sender, recipient, claimed);
