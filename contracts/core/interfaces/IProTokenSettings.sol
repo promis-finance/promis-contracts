@@ -54,18 +54,6 @@ interface IProTokenSettings {
     function setStrategist(address _strategist) external;
 
     /**
-     * @notice Configures price settings for the pro token
-     * @dev Price settings determine how the pro token's value is calculated.
-     *      Get the price directly from the contract can only be used on the chain the price is being pushed on (with getDollarPrice()).
-     *      The other chains will need to use oracle price source
-     * @param _proTokenPriceSettings Struct containing price configuration:
-     *        - oraclePriceSource: Address of price oracle contract (zero address if not using oracle)
-     */
-    function setProTokenPriceSettings(
-        ProTokenSettingsTypes.ProTokenPriceSettings memory _proTokenPriceSettings
-    ) external;
-
-    /**
      * @notice Sets the address of the pro token operations contract
      * @dev The operations contract handles core functionality like minting and unminting of pro tokens
      * @param _proTokenOperations Address of the pro token operations contract

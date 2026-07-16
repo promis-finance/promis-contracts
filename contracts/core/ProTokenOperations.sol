@@ -112,7 +112,6 @@ contract ProTokenOperations is
     struct MintSettings {
         ProTokenSettingsTypes.GetYAssetResponse yAssetSettings;
         address proToken;
-        ProTokenSettingsTypes.ProTokenPriceSettings proTokenPriceSettings;
     }
 
     function _verifyProof(
@@ -276,7 +275,6 @@ contract ProTokenOperations is
             UsdRepresentation memory rep = _getUsdRepresentationProToken(
                 proTokenInfo.proToken,
                 _amount,
-                proTokenInfo.priceSettings,
                 18
             );
             if (rep.assetAmountUSD < minW)
@@ -383,8 +381,7 @@ contract ProTokenOperations is
             _yAsset,
             _amount,
             yAssetSettings,
-            proTokenInfo.proToken,
-            proTokenInfo.priceSettings
+            proTokenInfo.proToken
         );
 
         // Check if there are any fees to pay for the unmint configured.
@@ -410,8 +407,9 @@ contract ProTokenOperations is
         IYAssetOperationsHandler yOps =
             IYAssetOperationsHandler(yAssetSettings.settings.yOperationsHandler);
 
+        uint256 backlog = IProTokenUnmintHandler(proTokenInfo.proTokenUnmintHandler).getUnpaidQueuedLiability(_yAsset);
         bool paidInstant;
-        if (yOps.previewPayOut(yAssetToReceiveAmount)) {
+        if (yOps.previewPayOut(yAssetToReceiveAmount + backlog)) {
             try yOps.payOut(_recipient, yAssetToReceiveAmount) {
                 paidInstant = true;
             } catch {
@@ -541,8 +539,7 @@ contract ProTokenOperations is
             _yAsset,
             _proUSDAmount,
             yAssetSettings,
-            proTokenInfo.proToken,
-            proTokenInfo.priceSettings
+            proTokenInfo.proToken
         );
 
         // Burn the vault's proUSD. yAsset is paid out instantly if liquidity allows, 
@@ -553,14 +550,14 @@ contract ProTokenOperations is
         IYAssetOperationsHandler yOps =
             IYAssetOperationsHandler(yAssetSettings.settings.yOperationsHandler);
 
+        uint256 backlog = IProTokenUnmintHandler(proTokenInfo.proTokenUnmintHandler).getUnpaidQueuedLiability(_yAsset);
         bool paidInstant;
-        if (yOps.previewPayOut(yAssetReceived)) {
+        if (yOps.previewPayOut(yAssetReceived + backlog)) {
             try yOps.payOut(_destination, yAssetReceived) {
                 paidInstant = true;
             } catch {
                 // fall through to the queue path below
             }
-            
         } 
         
         if (paidInstant) {
@@ -647,7 +644,6 @@ contract ProTokenOperations is
             memory proTokenUsdRepresentation = _getUsdRepresentationProToken(
                 settings.proToken,
                 1e18, // 1 pro token in 18 decimals
-                settings.proTokenPriceSettings,
                 18
             );
 
@@ -714,8 +710,7 @@ contract ProTokenOperations is
     ) internal view returns (MintSettings memory settings) {
         (
             settings.yAssetSettings,
-            settings.proToken,
-            settings.proTokenPriceSettings
+            settings.proToken
         ) = _getRelevantSettings(_yAsset);
     }
 
@@ -726,8 +721,7 @@ contract ProTokenOperations is
         view
         returns (
             ProTokenSettingsTypes.GetYAssetResponse memory yAssetSettings,
-            address proToken,
-            ProTokenSettingsTypes.ProTokenPriceSettings memory proTokenPriceSettings
+            address proToken
         )
     {
         yAssetSettings = _getYAssetSettings(_yAsset);
@@ -736,7 +730,6 @@ contract ProTokenOperations is
             IProTokenSettings(proTokenSettings).getProTokenInfo();
 
         proToken = proTokenInfo.proToken;
-        proTokenPriceSettings = proTokenInfo.priceSettings;
     }
 
     struct UsdRepresentation {
@@ -748,15 +741,13 @@ contract ProTokenOperations is
         address _yAsset,
         uint256 _proTokenAmount,
         ProTokenSettingsTypes.GetYAssetResponse memory yAssetSettings,
-        address proToken,
-        ProTokenSettingsTypes.ProTokenPriceSettings memory proTokenPriceSettings
+        address proToken
     ) internal view returns (uint256) {
         // Convert both proToken and yAsset to their current USD representations
         UsdRepresentation
             memory proTokenUsdRepresentation = _getUsdRepresentationProToken(
                 proToken,
                 _proTokenAmount,
-                proTokenPriceSettings,
                 18
             );
 
@@ -864,31 +855,13 @@ contract ProTokenOperations is
     function _getUsdRepresentationProToken(
         address _proToken,
         uint256 _amount,
-        ProTokenSettingsTypes.ProTokenPriceSettings memory _proTokenPriceSettings,
         uint8 _decimals
     ) internal view returns (UsdRepresentation memory usdRepresentation) {
-        // calculate the USD representation of the pro token using the configured price settings
-        if (_proTokenPriceSettings.oraclePriceSource == address(0)) {
-            // when no oracle configured, try get price directly from pro token contract
-            usdRepresentation.assetUSD = IProToken(_proToken).getUSDPrice();
-            usdRepresentation.assetAmountUSD =
-                (_amount * usdRepresentation.assetUSD) /
-                (10 ** _decimals); // come as 18 decimals
-        } else {
-            address[] memory oracles = new address[](1);
-            oracles[0] = _proTokenPriceSettings.oraclePriceSource;
-
-            usdRepresentation.assetUSD = _aggregateOraclePrices(
-                _proToken,
-                oracles
-            ); // come always as 18 decimals
-            if (usdRepresentation.assetUSD < USD_PRECISION)
-                revert OraclePriceBelowMin(usdRepresentation.assetUSD);
-                
-            usdRepresentation.assetAmountUSD =
-                (_amount * usdRepresentation.assetUSD) /
-                (10 ** _decimals); // come as 18 decimals
-        }
+        // get price directly from pro token contract
+        usdRepresentation.assetUSD = IProToken(_proToken).getUSDPrice();
+        usdRepresentation.assetAmountUSD =
+            (_amount * usdRepresentation.assetUSD) /
+            (10 ** _decimals); // come as 18 decimals
     }
 
     function _getUsdRepresentationYAsset(

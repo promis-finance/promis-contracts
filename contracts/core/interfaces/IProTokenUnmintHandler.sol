@@ -138,6 +138,11 @@ interface IProTokenUnmintHandler {
             uint256 lastUnmintBatchIdProcessed
         );
 
+    /// @notice Gets the yAsset owed to queued, not-yet-processed unmint requests.
+    /// @param yAsset The address of the yAsset.
+    /// @return liability The yAsset amount owed
+    function getUnpaidQueuedLiability(address yAsset) external returns(uint256 liability);
+
     /// @notice Checks if a specific unmint request has been claimed
     /// @param yAsset The address of the yield-bearing asset
     /// @param requestId The unique identifier of the unmint request

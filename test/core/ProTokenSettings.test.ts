@@ -645,50 +645,6 @@ describe("ProTokenSettings", function () {
     });
 
     // =======================================================================
-    // setProTokenPriceSettings
-    // =======================================================================
-    describe("setProTokenPriceSettings()", function () {
-        it("admin can set price settings", async function () {
-            const { proTokenSettings, accounts } = await loadFixture(
-                proTokenSettingsFixture
-            );
-            const oracle = getRandomAddress();
-
-            await expect(
-                proTokenSettings
-                    .connect(accounts.admin)
-                    .setProTokenPriceSettings({ oraclePriceSource: oracle })
-            )
-                .to.emit(proTokenSettings, EVENTS.ProTokenPriceSettingsSet)
-                .withArgs(oracle);
-        });
-
-        it("allows oracle = zero address", async function () {
-            const { proTokenSettings, accounts } = await loadFixture(
-                proTokenSettingsFixture
-            );
-            await expect(
-                proTokenSettings
-                    .connect(accounts.admin)
-                    .setProTokenPriceSettings({ oraclePriceSource: ZERO_ADDRESS })
-            )
-                .to.emit(proTokenSettings, EVENTS.ProTokenPriceSettingsSet)
-                .withArgs(ZERO_ADDRESS);
-        });
-
-        it("reverts when called by non-admin", async function () {
-            const { proTokenSettings, accounts } = await loadFixture(
-                proTokenSettingsFixture
-            );
-            await expect(
-                proTokenSettings
-                    .connect(accounts.operator)
-                    .setProTokenPriceSettings({ oraclePriceSource: getRandomAddress() })
-            ).to.be.revertedWithCustomError(proTokenSettings, ERRORS.NotAdmin);
-        });
-    });
-
-    // =======================================================================
     // setYAsset
     // =======================================================================
     describe("setYAsset()", function () {

@@ -619,18 +619,6 @@
             "internalType": "address",
             "name": "proTokenUnmintHandler",
             "type": "address"
-          },
-          {
-            "components": [
-              {
-                "internalType": "address",
-                "name": "oraclePriceSource",
-                "type": "address"
-              }
-            ],
-            "internalType": "struct ProTokenSettingsTypes.ProTokenPriceSettings",
-            "name": "priceSettings",
-            "type": "tuple"
           }
         ],
         "internalType": "struct ProTokenSettingsTypes.GetProTokenInfoResponse",
@@ -955,26 +943,6 @@
       }
     ],
     "name": "setProTokenOperations",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "components": [
-          {
-            "internalType": "address",
-            "name": "oraclePriceSource",
-            "type": "address"
-          }
-        ],
-        "internalType": "struct ProTokenSettingsTypes.ProTokenPriceSettings",
-        "name": "_proTokenPriceSettings",
-        "type": "tuple"
-      }
-    ],
-    "name": "setProTokenPriceSettings",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"

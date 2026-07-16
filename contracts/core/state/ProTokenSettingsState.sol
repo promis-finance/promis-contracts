@@ -38,9 +38,6 @@ abstract contract ProTokenSettingsState {
     /// @notice StrategyVault contract (proUSD+ custody and strategist drawdown).
     address internal strategyVault;
 
-    /// @notice Price configuration for proUSD.
-    ProTokenSettingsTypes.ProTokenPriceSettings internal proTokenPriceSettings;
-
     /// @notice Set of registered yAsset addresses.
     EnumerableSet.AddressSet internal yAssets;
 
@@ -57,5 +54,5 @@ abstract contract ProTokenSettingsState {
     mapping(address => bool) internal authority;
 
     /// @notice Reserved storage for future upgrades.
-    uint256[34] internal __gap;
+    uint256[35] internal __gap;
 }

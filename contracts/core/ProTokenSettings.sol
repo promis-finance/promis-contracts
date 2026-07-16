@@ -105,14 +105,6 @@ contract ProTokenSettings is
     }
 
     /// @inheritdoc IProTokenSettings
-    function setProTokenPriceSettings(
-        ProTokenSettingsTypes.ProTokenPriceSettings memory _proTokenPriceSettings
-    ) external override onlyAdmin {
-        proTokenPriceSettings = _proTokenPriceSettings;
-        emit ProTokenPriceSettingsSet(_proTokenPriceSettings.oraclePriceSource);
-    }
-
-    /// @inheritdoc IProTokenSettings
     function setProTokenOperations(
         address _proTokenOperations
     ) external override onlyAdmin {
@@ -377,8 +369,7 @@ contract ProTokenSettings is
             ProTokenSettingsTypes.GetProTokenInfoResponse({
                 proToken: proToken,
                 proTokenOperations: proTokenOperations,
-                proTokenUnmintHandler: proTokenUnmintHandler,
-                priceSettings: proTokenPriceSettings
+                proTokenUnmintHandler: proTokenUnmintHandler
             })
         );
     }
