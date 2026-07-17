@@ -409,7 +409,7 @@ contract ProTokenOperations is
 
         uint256 backlog = IProTokenUnmintHandler(proTokenInfo.proTokenUnmintHandler).getUnpaidQueuedLiability(_yAsset);
         bool paidInstant;
-        if (yOps.previewPayOut(yAssetToReceiveAmount + backlog)) {
+        if (backlog == 0 && yOps.previewPayOut(yAssetToReceiveAmount)) {
             try yOps.payOut(_recipient, yAssetToReceiveAmount) {
                 paidInstant = true;
             } catch {
@@ -552,7 +552,7 @@ contract ProTokenOperations is
 
         uint256 backlog = IProTokenUnmintHandler(proTokenInfo.proTokenUnmintHandler).getUnpaidQueuedLiability(_yAsset);
         bool paidInstant;
-        if (yOps.previewPayOut(yAssetReceived + backlog)) {
+        if (backlog == 0 && yOps.previewPayOut(yAssetReceived)) {
             try yOps.payOut(_destination, yAssetReceived) {
                 paidInstant = true;
             } catch {
