@@ -1610,12 +1610,11 @@ describe("ProTokenOperations", function () {
             expect(out).to.equal((HUNDRED_TOKENS * 97n) / 100n);
         });
 
-        it("unmint denominator when price > cap (POLARITY PIN — flips when max lands)", async function () {
+        it("unmint values the yAsset at max(price, cap): $1.03 asset pays at $1.03 (no depeg premium)", async function () {
             const ctx = await loadFixture(fullProtocolFixture);
             const price103 = (ONE_USD * 103n) / 100n;
             const { asset, assetAddr } = await registerCappedAsset(ctx, price103);
 
-            // Vault mints against the DEFAULT $1 asset to obtain proUSD cleanly.
             const vault = ctx.accounts.strategyVault;
             await ctx.yAsset.mint(vault.address, HUNDRED_TOKENS);
             await ctx.yAsset.connect(vault)
@@ -1629,11 +1628,11 @@ describe("ProTokenOperations", function () {
                 .strategicUnmint(assetAddr, HUNDRED_TOKENS, dest);
             const received = (await asset.balanceOf(dest)) - before;
 
-            // CURRENT (min): 100e18 * 1e18 / 1e18   = 100e18  ← pays the depeg premium
-            // AFTER max fix: 100e18 * 1e18 / 1.03e18 = 97.087e18
-            expect(received).to.equal(HUNDRED_TOKENS);
-            // When you flip to max, change to:
-            // expect(received).to.equal((HUNDRED_TOKENS * ONE_USD) / price103);
+            // Divisor is max(price, cap) = $1.03: 100e18 * 1e18 / 1.03e18.
+            // Under the old min(price, cap) this paid 100e18 — a $3 depeg-premium
+            // extraction per 100 proUSD. This assertion is the polarity pin: if it
+            // ever reads 100e18 again, the min bug is back.
+            expect(received).to.equal((HUNDRED_TOKENS * ONE_USD) / price103);
         });
     });
 

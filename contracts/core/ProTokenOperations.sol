@@ -769,18 +769,18 @@ contract ProTokenOperations is
         // A configured usdCap is mandatory (see _calculateMintingAmount).
         if (yAssetSettings.settings.priceSettings.usdCap == 0) revert ZeroUsdCap();
             
-        // Cap the yAsset USD value at the configured cap
-        uint256 cappedYAssetUSD = yAssetUsdRepresentation.assetUSD >
+        // Floor the yAsset USD value at the configured cap: max(price, cap).
+        uint256 flooredYAssetUSD = yAssetUsdRepresentation.assetUSD <
             yAssetSettings.settings.priceSettings.usdCap
             ? yAssetSettings.settings.priceSettings.usdCap
             : yAssetUsdRepresentation.assetUSD;
 
         // Calculate amount using capped USD value
-        // yAssetAmount = (proTokenUSD * yAssetDecimals) / cappedYAssetUSD
+        // yAssetAmount = (proTokenUSD * yAssetDecimals) / flooredYAssetUSD
         return
             (proTokenUsdRepresentation.assetAmountUSD *
                 oneYAssetUnit) /
-            cappedYAssetUSD;
+            flooredYAssetUSD;
     }
 
     function _calculateMintingAmount(
