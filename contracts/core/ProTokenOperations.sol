@@ -766,44 +766,21 @@ contract ProTokenOperations is
             revert InvalidOraclePrice(address(0));
         }
 
-        // Check if USD cap is configured
-        if (yAssetSettings.settings.priceSettings.usdCap > 0) {
-            // Apply USD cap logic
-            // Cap the yAsset USD value at the configured cap
-            uint256 cappedYAssetUSD = yAssetUsdRepresentation.assetUSD >
-                yAssetSettings.settings.priceSettings.usdCap
-                ? yAssetSettings.settings.priceSettings.usdCap
-                : yAssetUsdRepresentation.assetUSD;
+        // A configured usdCap is mandatory (see _calculateMintingAmount).
+        if (yAssetSettings.settings.priceSettings.usdCap == 0) revert ZeroUsdCap();
+            
+        // Cap the yAsset USD value at the configured cap
+        uint256 cappedYAssetUSD = yAssetUsdRepresentation.assetUSD >
+            yAssetSettings.settings.priceSettings.usdCap
+            ? yAssetSettings.settings.priceSettings.usdCap
+            : yAssetUsdRepresentation.assetUSD;
 
-            // Calculate amount using capped USD value
-            // yAssetAmount = (proTokenUSD * yAssetDecimals) / cappedYAssetUSD
-            return
-                (proTokenUsdRepresentation.assetAmountUSD *
-                    oneYAssetUnit) /
-                cappedYAssetUSD;
-        } else {
-            // No USD cap configured: use 1:1 cap logic
-            uint256 calculatedAmount = (proTokenUsdRepresentation
-                .assetAmountUSD *
+        // Calculate amount using capped USD value
+        // yAssetAmount = (proTokenUSD * yAssetDecimals) / cappedYAssetUSD
+        return
+            (proTokenUsdRepresentation.assetAmountUSD *
                 oneYAssetUnit) /
-                yAssetUsdRepresentation.assetAmountUSD;
-
-            uint256 decimalAdjustedAmount;
-            if (yAssetSettings.settings.decimals > 18) {
-                decimalAdjustedAmount =
-                    _proTokenAmount *
-                    (10 ** (yAssetSettings.settings.decimals - 18));
-            } else {
-                decimalAdjustedAmount =
-                    _proTokenAmount /
-                    (10 ** (18 - yAssetSettings.settings.decimals));
-            }
-
-            if (calculatedAmount > decimalAdjustedAmount) {
-                return decimalAdjustedAmount; // Cap at 1:1
-            }
-            return calculatedAmount;
-        }
+            cappedYAssetUSD;
     }
 
     function _calculateMintingAmount(
@@ -814,42 +791,22 @@ contract ProTokenOperations is
         uint8 yAssetDecimals
     ) internal pure returns (uint256) {
 
-        // Check if USD cap is configured
-        if (yAssetPriceSettings.usdCap > 0) {
-            // Apply USD cap logic
-            // Cap the yAsset USD value at the configured cap
-            uint256 cappedYAssetUSD = yAssetUsdRep.assetUSD >
-                yAssetPriceSettings.usdCap
-                ? yAssetPriceSettings.usdCap
-                : yAssetUsdRep.assetUSD;
+        // A configured usdCap is mandatory: it clamps the yAsset's USD value on the
+        // mint side (credit at most min(price, cap) per unit).
+        if (yAssetPriceSettings.usdCap == 0) revert ZeroUsdCap();
 
-            // Calculate amount using capped USD value
-            uint256 cappedYAssetAmountUSD = (yAssetAmount *
-                cappedYAssetUSD) / (10 ** yAssetDecimals);
-            return
-                (cappedYAssetAmountUSD * USD_PRECISION) /
-                proTokenUsdRep.assetAmountUSD;
-        } else {
-            // No USD cap configured: use legacy 1:1 cap logic
-            uint256 calculatedAmount = (yAssetUsdRep.assetAmountUSD *
-                USD_PRECISION) / proTokenUsdRep.assetAmountUSD;
+        // Cap the yAsset USD value at the configured cap: min(price, cap)
+        uint256 cappedYAssetUSD = yAssetUsdRep.assetUSD >
+            yAssetPriceSettings.usdCap
+            ? yAssetPriceSettings.usdCap
+            : yAssetUsdRep.assetUSD;
 
-            uint256 decimalAdjustedAmount;
-            if (yAssetDecimals > 18) {
-                decimalAdjustedAmount =
-                    yAssetAmount /
-                    (10 ** (yAssetDecimals - 18));
-            } else {
-                decimalAdjustedAmount =
-                    yAssetAmount *
-                    (10 ** (18 - yAssetDecimals));
-            }
-
-            if (calculatedAmount > decimalAdjustedAmount) {
-                return decimalAdjustedAmount; // Cap at 1:1
-            }
-            return calculatedAmount;
-        }
+        // Calculate amount using capped USD value
+        uint256 cappedYAssetAmountUSD = (yAssetAmount *
+            cappedYAssetUSD) / (10 ** yAssetDecimals);
+        return
+            (cappedYAssetAmountUSD * USD_PRECISION) /
+            proTokenUsdRep.assetAmountUSD;
     }
 
     function _getUsdRepresentationProToken(

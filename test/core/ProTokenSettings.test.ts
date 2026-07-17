@@ -813,6 +813,50 @@ describe("ProTokenSettings", function () {
                     .setYAsset(getRandomAddress(), settings)
             ).to.be.revertedWithCustomError(proTokenSettings, ERRORS.NotAdmin);
         });
+
+        it("reverts ZeroUsdCap when usdCap is zero (legacy config no longer valid)", async function () {
+        const { proTokenSettings, accounts, proTokenSettingsAddress } =
+            await loadFixture(proTokenSettingsFixture);
+
+        const yAsset = await deployMintableERC20("Test", "T", DECIMALS_18);
+        const yAssetAddress = await yAsset.getAddress();
+        const yOpsHandler = await deployYAssetOperationsHandler(
+            proTokenSettingsAddress,
+            yAssetAddress
+        );
+
+        const base = createDefaultYAssetSettings(await yOpsHandler.getAddress());
+        const settings: YAssetSettings = {
+            ...base,
+            priceSettings: { ...base.priceSettings, usdCap: 0n },
+        };
+
+        await expect(
+            proTokenSettings.connect(accounts.admin).setYAsset(yAssetAddress, settings)
+        ).to.be.revertedWithCustomError(proTokenSettings, ERRORS.ZeroUsdCap);
+    });
+
+    it("stores and returns the configured usdCap", async function () {
+        const { proTokenSettings, accounts, proTokenSettingsAddress } =
+            await loadFixture(proTokenSettingsFixture);
+
+        const yAsset = await deployMintableERC20("Test", "T", DECIMALS_18);
+        const yAssetAddress = await yAsset.getAddress();
+        const yOpsHandler = await deployYAssetOperationsHandler(
+            proTokenSettingsAddress,
+            yAssetAddress
+        );
+
+        const base = createDefaultYAssetSettings(await yOpsHandler.getAddress());
+        const settings: YAssetSettings = {
+            ...base,
+            priceSettings: { ...base.priceSettings, usdCap: ONE_USD * 2n },
+        };
+        await proTokenSettings.connect(accounts.admin).setYAsset(yAssetAddress, settings);
+
+        const resp = await proTokenSettings.getYAssets([yAssetAddress]);
+        expect(resp.yAssets[0].settings.priceSettings.usdCap).to.equal(ONE_USD * 2n);
+    });
     });
 
     // =======================================================================

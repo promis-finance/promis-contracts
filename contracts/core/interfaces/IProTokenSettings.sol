@@ -411,6 +411,7 @@ interface IProTokenSettings {
 
     error ZeroAddress();
     error MaxFeeExceeded();
+    error ZeroUsdCap();
     error NotAdmin();
     error NotAdminOrOperator();
     error LengthMismatch();

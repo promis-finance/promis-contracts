@@ -159,6 +159,7 @@ contract ProTokenSettings is
         if (_yAsset == address(0)) revert ZeroAddress();
         if (_settings.yOperationsHandler == address(0)) revert ZeroAddress();
         if (_settings.unmintFeePer > MAX_UNMINT_FEE) revert MaxFeeExceeded();
+        if (_settings.priceSettings.usdCap == 0) revert ZeroUsdCap();
         yAssets.add(_yAsset);
 
         // Cache storage pointer

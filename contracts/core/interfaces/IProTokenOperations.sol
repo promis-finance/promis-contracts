@@ -385,4 +385,5 @@ interface IProTokenOperations {
     error BelowMinDeposit(uint256 oldMin, uint256 newMin);
     error BelowMinWithdraw(uint256 oldMin, uint256 newMin);
     error InvalidMinBases();
+    error ZeroUsdCap();
 }

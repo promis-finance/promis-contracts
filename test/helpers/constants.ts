@@ -186,6 +186,7 @@ export const ERRORS = {
     BelowMinDeposit: "BelowMinDeposit",
     BelowMinWithdraw: "BelowMinWithdraw",
     NotStrategyVault: "NotStrategyVault",
+    ZeroUsdCap: "ZeroUsdCap",
 
     // ProTokenUnmintHandler
     InvalidDuration: "InvalidDuration",

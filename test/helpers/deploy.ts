@@ -267,19 +267,10 @@ export async function deployFullProtocol(): Promise<FullProtocolDeployment> {
     await proTokenSettings.connect(accounts.admin).setProTokenUnmintHandler(proTokenUnmintHandlerAddress);
 
     // Configure yAsset in settings
-    const yAssetSettings: YAssetSettings = {
-        yOperationsHandler: yAssetOperationsHandlerAddress,
-        decimals: DECIMALS_18,
-        isEnabled: true,
-        isPaused: false,
-        unmintFeePer: 0n,
-        priceSettings: {
-            staticPriceSource: ONE_USD,
-            usdCap: 0n,
-            oraclePriceSources: [],
-        },
-    };
-
+    const yAssetSettings = createDefaultYAssetSettings(
+        yAssetOperationsHandlerAddress,
+        DECIMALS_18,
+    );
     await proTokenSettings.connect(accounts.admin).setYAsset(yAssetAddress, yAssetSettings);
 
     return {
@@ -300,7 +291,8 @@ export async function deployFullProtocol(): Promise<FullProtocolDeployment> {
 export function createDefaultYAssetSettings(
     yOperationsHandler: string,
     decimals: number = DECIMALS_18,
-    staticPrice: bigint = ONE_USD
+    staticPrice: bigint = ONE_USD,
+    usdCap: bigint = ONE_USD,
 ): YAssetSettings {
     return {
         yOperationsHandler,
@@ -310,29 +302,8 @@ export function createDefaultYAssetSettings(
         unmintFeePer: 0n,
         priceSettings: {
             staticPriceSource: staticPrice,
-            usdCap: 0n,
+            usdCap,
             oraclePriceSources: [],
         },
-    };
-}
-
-export function createLstYAssetSettings(
-    yOperationsHandler: string,
-    lstUnderlyingAsset: string,
-    lstRatio: bigint,
-    decimals: number = DECIMALS_18,
-    staticPrice: bigint = ONE_USD
-): YAssetSettings {
-    return {
-        isEnabled: true,
-        isPaused: false,
-        decimals,
-        priceSettings: {
-            staticPriceSource: staticPrice,
-            oraclePriceSources: [],
-            usdCap: 0n,
-        },
-        unmintFeePer: 0n,
-        yOperationsHandler,
     };
 }
