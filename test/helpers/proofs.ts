@@ -26,6 +26,7 @@ export interface ProofData {
     yAsset: string;
     amount: bigint;
     minAmountOut: bigint;
+    deadline: bigint;
     proofKind: ProofKind;
 }
 
@@ -37,6 +38,7 @@ const PROOF_TYPES = {
         { name: "yAsset",       type: "address" },
         { name: "amount",       type: "uint256" },
         { name: "minAmountOut", type: "uint256" },
+        { name: "deadline",     type: "uint256" },
         { name: "proofKind",    type: "uint8"   },
     ],
 };
@@ -49,6 +51,7 @@ const UNMINT_PROOF_TYPES = {
         { name: "yAsset",       type: "address" },
         { name: "amount",       type: "uint256" },
         { name: "minAmountOut", type: "uint256" },
+        { name: "deadline",     type: "uint256" },
         { name: "proofKind",    type: "uint8"   },
     ],
 };

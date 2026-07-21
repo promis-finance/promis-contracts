@@ -367,6 +367,7 @@ interface IProTokenOperations {
     error ZeroAmount();
     error NotAdmin();
     error Unauthorized();
+    error ProofExpired();
     error Paused();
     error YAssetNotEnabled();
     error YAssetPaused();

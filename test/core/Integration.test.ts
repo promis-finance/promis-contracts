@@ -59,6 +59,14 @@ import { deployMockYieldProtocolHandler } from "../helpers/mocks";
 // distracting if inlined; nothing related to operator state changes is hidden)
 // ---------------------------------------------------------------------------
 
+// Default proof validity window. Wide enough that intra-test `time.increase`
+// calls (unmint batch windows) never expire a proof signed earlier.
+const PROOF_TTL = 3n * 365n * 86400n; // 3 years
+
+async function futureDeadline(ttl: bigint = PROOF_TTL): Promise<bigint> {
+    return BigInt(await time.latest()) + ttl;
+}
+
 async function authorizeBackend(ctx: FullProtocolFixture) {
     await ctx.proTokenSettings
         .connect(ctx.accounts.admin)
@@ -90,6 +98,7 @@ async function mintProTokensFor(
         .find((e) => e?.name === EVENTS.MintRequestCreated);
     const requestId = event!.args.requestID as bigint;
 
+    const deadline = await futureDeadline();
     const proofData: ProofData = {
         requestId,
         user: user.address,
@@ -97,6 +106,7 @@ async function mintProTokensFor(
         yAsset: ctx.yAssetAddress,
         amount,
         minAmountOut: 0n,
+        deadline,
         proofKind: ProofKind.PROOF_OF_APPROVE,
     };
     const proof = await signMintProof(
@@ -106,7 +116,7 @@ async function mintProTokensFor(
     );
     await ctx.proTokenOperations
         .connect(user)
-        .finalizeMintRequest(requestId, ProofKind.PROOF_OF_APPROVE, proof);
+        .finalizeMintRequest(requestId, ProofKind.PROOF_OF_APPROVE, deadline, proof);
 
     return ctx.proToken.balanceOf(user.address);
 }
@@ -144,6 +154,7 @@ async function createAndApproveUnmint(
         .find((e) => e?.name === EVENTS.UnmintRequestCreated);
     const opsRequestId = event!.args.requestID as bigint;
 
+    const deadline = await futureDeadline();
     const proofData: ProofData = {
         requestId: opsRequestId,
         user: user.address,
@@ -151,6 +162,7 @@ async function createAndApproveUnmint(
         yAsset: ctx.yAssetAddress,
         amount: proTokenAmount,
         minAmountOut: 0n,
+        deadline,
         proofKind: ProofKind.PROOF_OF_APPROVE,
     };
     const proof = await signUnmintProof(
@@ -160,7 +172,7 @@ async function createAndApproveUnmint(
     );
     await ctx.proTokenOperations
         .connect(user)
-        .finalizeUnmintRequest(opsRequestId, ProofKind.PROOF_OF_APPROVE, proof);
+        .finalizeUnmintRequest(opsRequestId, ProofKind.PROOF_OF_APPROVE, deadline, proof);
 
     const currentBatchId = await ctx.proTokenUnmintHandler.getCurrentUnmintBatchId(
         ctx.yAssetAddress,
@@ -329,6 +341,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
                 })
                 .find((e) => e?.name === EVENTS.UnmintRequestCreated)!.args
                 .requestID) as bigint;
+            const deadline = await futureDeadline();
             const proof = await signUnmintProof(
                 ctx.accounts.authority,
                 ctx.proTokenOperationsAddress,
@@ -339,6 +352,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
                     yAsset: ctx.yAssetAddress,
                     amount: HUNDRED_TOKENS,
                     minAmountOut: 0n,
+                    deadline,
                     proofKind: ProofKind.PROOF_OF_APPROVE,
                 },
             );
@@ -346,7 +360,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
             await expect(
                 ctx.proTokenOperations
                     .connect(alice)
-                    .finalizeUnmintRequest(opsRequestId, ProofKind.PROOF_OF_APPROVE, proof),
+                    .finalizeUnmintRequest(opsRequestId, ProofKind.PROOF_OF_APPROVE, deadline, proof),
             ).to.emit(ctx.proTokenOperations, EVENTS.ProTokenUnmintInstant);
 
             // Alice has her 100 yAsset back already — no batch, no claim step.
@@ -382,6 +396,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
                 .createMintRequest(ctx.yAssetAddress, HUNDRED_TOKENS, 0n, ZERO_ADDRESS);
 
             // Backend signs RETURN instead of APPROVE
+            const deadline = await futureDeadline();
             const proofData: ProofData = {
                 requestId: 0n,
                 user: alice.address,
@@ -389,6 +404,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
                 yAsset: ctx.yAssetAddress,
                 amount: HUNDRED_TOKENS,
                 minAmountOut: 0n,
+                deadline,
                 proofKind: ProofKind.PROOF_OF_RETURN,
             };
             const proof = await signMintProof(
@@ -399,7 +415,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
 
             await ctx.proTokenOperations
                 .connect(alice)
-                .finalizeMintRequest(0n, ProofKind.PROOF_OF_RETURN, proof);
+                .finalizeMintRequest(0n, ProofKind.PROOF_OF_RETURN, deadline, proof);
 
             // No proToken minted
             expect(await ctx.proToken.balanceOf(alice.address)).to.equal(0n);
@@ -440,6 +456,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
             expect(await ctx.proToken.balanceOf(alice.address)).to.equal(0n);
 
             // Backend signs RETURN
+            const deadline = await futureDeadline();
             const proofData: ProofData = {
                 requestId: 0n,
                 user: alice.address,
@@ -447,6 +464,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
                 yAsset: ctx.yAssetAddress,
                 amount: HUNDRED_TOKENS,
                 minAmountOut: 0n,
+                deadline,
                 proofKind: ProofKind.PROOF_OF_RETURN,
             };
             const proof = await signUnmintProof(
@@ -457,7 +475,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
 
             await ctx.proTokenOperations
                 .connect(alice)
-                .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_RETURN, proof);
+                .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_RETURN, deadline, proof);
 
             // proToken returned to Alice, supply unchanged
             expect(await ctx.proToken.balanceOf(alice.address)).to.equal(HUNDRED_TOKENS);
@@ -853,6 +871,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
                 })
                 .find((e) => e?.name === EVENTS.UnmintRequestCreated)!.args
                 .requestID) as bigint;
+            const deadline = await futureDeadline();
             const proof = await signUnmintProof(
                 ctx.accounts.authority,
                 ctx.proTokenOperationsAddress,
@@ -863,6 +882,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
                     yAsset: ctx.yAssetAddress,
                     amount: HUNDRED_TOKENS,
                     minAmountOut: 0n,
+                    deadline,
                     proofKind: ProofKind.PROOF_OF_APPROVE,
                 },
             );
@@ -870,7 +890,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
             await expect(
                 ctx.proTokenOperations
                     .connect(alice)
-                    .finalizeUnmintRequest(opsRequestId, ProofKind.PROOF_OF_APPROVE, proof),
+                    .finalizeUnmintRequest(opsRequestId, ProofKind.PROOF_OF_APPROVE, deadline, proof),
             ).to.emit(ctx.proTokenOperations, EVENTS.ProTokenUnmintInstant);
 
             // Alice has her funds.
@@ -1010,6 +1030,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
             ).to.be.revertedWithCustomError(ctx.proTokenOperations, ERRORS.Paused);
 
             // Finalization also blocked
+            const deadline = await futureDeadline();
             const proofData: ProofData = {
                 requestId: 0n,
                 user: alice.address,
@@ -1017,6 +1038,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
                 yAsset: ctx.yAssetAddress,
                 amount: HUNDRED_TOKENS,
                 minAmountOut: 0n,
+                deadline,
                 proofKind: ProofKind.PROOF_OF_APPROVE,
             };
             const proof = await signMintProof(
@@ -1027,7 +1049,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
             await expect(
                 ctx.proTokenOperations
                     .connect(alice)
-                    .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, proof),
+                    .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, deadline, proof),
             ).to.be.revertedWithCustomError(ctx.proTokenOperations, ERRORS.Paused);
 
             // Unpause
@@ -1036,7 +1058,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
             // Now finalize succeeds
             await ctx.proTokenOperations
                 .connect(alice)
-                .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, proof);
+                .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, deadline, proof);
 
             expect(await ctx.proToken.balanceOf(alice.address)).to.equal(HUNDRED_TOKENS);
         });
@@ -1198,6 +1220,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
                     bob.address,
                 );
 
+            const deadline = await futureDeadline();
             const proofData: ProofData = {
                 requestId: 0n,
                 user: alice.address,
@@ -1205,6 +1228,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
                 yAsset: ctx.yAssetAddress,
                 amount: HUNDRED_TOKENS,
                 minAmountOut: 0n,
+                deadline,
                 proofKind: ProofKind.PROOF_OF_APPROVE,
             };
             const proof = await signMintProof(
@@ -1215,7 +1239,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
 
             await ctx.proTokenOperations
                 .connect(alice)
-                .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, proof);
+                .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, deadline, proof);
 
             // Bob receives proToken, Alice does not
             expect(await ctx.proToken.balanceOf(bob.address)).to.equal(HUNDRED_TOKENS);

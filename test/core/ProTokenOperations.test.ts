@@ -1,4 +1,4 @@
-import { loadFixture } from "@nomicfoundation/hardhat-network-helpers";
+import { loadFixture, time } from "@nomicfoundation/hardhat-network-helpers";
 import { expect } from "chai";
 import { ethers, upgrades } from "hardhat";
 
@@ -47,6 +47,12 @@ import {
 //     request is queued in ProTokenUnmintHandler (ProTokenUnmintQueued /
 //     StrategicUnmintQueued event).
 //
+// PROOF DEADLINE: finalize proofs carry a signed `deadline` (anti-sandwich),
+// supplied as a calldata arg at finalize and included in the EIP-712 struct.
+// These tests stamp a far-future deadline computed at call time (proof usability
+// isn't what most of these test); expiry/tamper behavior is pinned in its own
+// block below.
+//
 // NOTE on amounts: HUNDRED_TOKENS == 100e18 sits exactly at the 100e18 base
 // floor, so a 1:1-priced 18-dec yAsset deposit of HUNDRED_TOKENS passes
 // (>= 100). Sub-floor amounts revert BelowMinDeposit / BelowMinWithdraw.
@@ -57,6 +63,12 @@ import {
 // INSTANT branch by default. Tests that want the QUEUED branch first drain the
 // unallocated balance via drainYAssetOps().
 // ---------------------------------------------------------------------------
+
+// Far-future deadline relative to current chain time; computed per-call so
+// clock-advancing tests never outrun a stale constant.
+async function farFuture(): Promise<bigint> {
+    return BigInt((await time.latest()) + 3600);
+}
 
 /**
  * Drain all unallocated yAsset from YAssetOperationsHandler. With no yield
@@ -91,11 +103,9 @@ describe("ProTokenOperations", function () {
             const { proTokenOperations, accounts } =
                 await loadFixture(fullProtocolFixture);
 
-            // Floors seeded to 100e18 at init.
             expect(await proTokenOperations.minDepositBase()).to.equal(HUNDRED_TOKENS);
             expect(await proTokenOperations.minWithdrawBase()).to.equal(HUNDRED_TOKENS);
 
-            // onlyAdmin path proves proTokenSettings is wired (it reads getAdmin()).
             await expect(
                 proTokenOperations
                     .connect(accounts.admin)
@@ -278,7 +288,6 @@ describe("ProTokenOperations", function () {
 
         it("reverts on deposit below the min floor (BelowMinDeposit)", async function () {
             const ctx = await loadFixture(setupApprovedYAsset);
-            // 1 wei of an 18-dec, $1 yAsset is far below the 100e18 floor.
             await expect(
                 ctx.proTokenOperations
                     .connect(ctx.accounts.user1)
@@ -376,7 +385,6 @@ describe("ProTokenOperations", function () {
         async function setupPendingMintRequest() {
             const ctx = await fullProtocolFixture();
 
-            // Authority lives in Settings now.
             await ctx.proTokenSettings
                 .connect(ctx.accounts.admin)
                 .setAuthority(ctx.accounts.authority.address, true);
@@ -389,6 +397,7 @@ describe("ProTokenOperations", function () {
                 .connect(ctx.accounts.user1)
                 .createMintRequest(ctx.yAssetAddress, HUNDRED_TOKENS, 0n, ZERO_ADDRESS);
 
+            const deadline = await farFuture();
             const proofData: ProofData = {
                 requestId: 0n,
                 user: ctx.accounts.user1.address,
@@ -396,6 +405,7 @@ describe("ProTokenOperations", function () {
                 yAsset: ctx.yAssetAddress,
                 amount: HUNDRED_TOKENS,
                 minAmountOut: 0n,
+                deadline,
                 proofKind: ProofKind.PROOF_OF_APPROVE,
             };
 
@@ -416,7 +426,7 @@ describe("ProTokenOperations", function () {
 
             await ctx.proTokenOperations
                 .connect(ctx.accounts.user1)
-                .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, proof);
+                .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, ctx.proofData.deadline, proof);
 
             const proTokenAfter = await ctx.proToken.balanceOf(ctx.accounts.user1.address);
             const handlerAfter = await ctx.yAsset.balanceOf(ctx.yAssetOperationsHandlerAddress);
@@ -447,6 +457,7 @@ describe("ProTokenOperations", function () {
                     ctx.accounts.user2.address
                 );
 
+            const deadline = await farFuture();
             const proofData: ProofData = {
                 requestId: 0n,
                 user: ctx.accounts.user1.address,
@@ -454,6 +465,7 @@ describe("ProTokenOperations", function () {
                 yAsset: ctx.yAssetAddress,
                 amount: HUNDRED_TOKENS,
                 minAmountOut: 0n,
+                deadline,
                 proofKind: ProofKind.PROOF_OF_APPROVE,
             };
 
@@ -465,7 +477,7 @@ describe("ProTokenOperations", function () {
 
             await ctx.proTokenOperations
                 .connect(ctx.accounts.user1)
-                .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, proof);
+                .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, deadline, proof);
 
             expect(await ctx.proToken.balanceOf(ctx.accounts.user2.address)).to.be.gt(0);
             expect(await ctx.proToken.balanceOf(ctx.accounts.user1.address)).to.equal(0);
@@ -481,7 +493,7 @@ describe("ProTokenOperations", function () {
 
             const tx = ctx.proTokenOperations
                 .connect(ctx.accounts.user1)
-                .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, proof);
+                .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, ctx.proofData.deadline, proof);
 
             await expect(tx).to.emit(ctx.proTokenOperations, EVENTS.MintRequestFinalized);
             await expect(tx).to.emit(ctx.proTokenOperations, EVENTS.ProTokenMint);
@@ -501,7 +513,7 @@ describe("ProTokenOperations", function () {
 
             await ctx.proTokenOperations
                 .connect(ctx.accounts.user1)
-                .finalizeMintRequest(0n, ProofKind.PROOF_OF_RETURN, proof);
+                .finalizeMintRequest(0n, ProofKind.PROOF_OF_RETURN, ctx.proofData.deadline, proof);
 
             const userAfter = await ctx.yAsset.balanceOf(ctx.accounts.user1.address);
             expect(userAfter - userBefore).to.equal(HUNDRED_TOKENS);
@@ -518,12 +530,12 @@ describe("ProTokenOperations", function () {
 
             await ctx.proTokenOperations
                 .connect(ctx.accounts.user1)
-                .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, proof);
+                .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, ctx.proofData.deadline, proof);
 
             await expect(
                 ctx.proTokenOperations
                     .connect(ctx.accounts.user1)
-                    .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, proof)
+                    .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, ctx.proofData.deadline, proof)
             ).to.be.revertedWithCustomError(
                 ctx.proTokenOperations,
                 ERRORS.RequestNotPending
@@ -536,6 +548,7 @@ describe("ProTokenOperations", function () {
                 .connect(ctx.accounts.admin)
                 .setAuthority(ctx.accounts.authority.address, true);
 
+            const deadline = await farFuture();
             const proofData: ProofData = {
                 requestId: 0n,
                 user: ctx.accounts.user1.address,
@@ -543,6 +556,7 @@ describe("ProTokenOperations", function () {
                 yAsset: ctx.yAssetAddress,
                 amount: HUNDRED_TOKENS,
                 minAmountOut: 0n,
+                deadline,
                 proofKind: ProofKind.PROOF_OF_APPROVE,
             };
             const proof = await signMintProof(
@@ -554,7 +568,7 @@ describe("ProTokenOperations", function () {
             await expect(
                 ctx.proTokenOperations
                     .connect(ctx.accounts.user1)
-                    .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, proof)
+                    .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, deadline, proof)
             ).to.be.revertedWithCustomError(
                 ctx.proTokenOperations,
                 ERRORS.RequestNotPending
@@ -572,7 +586,7 @@ describe("ProTokenOperations", function () {
             await expect(
                 ctx.proTokenOperations
                     .connect(ctx.accounts.user2)
-                    .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, proof)
+                    .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, ctx.proofData.deadline, proof)
             ).to.be.revertedWithCustomError(
                 ctx.proTokenOperations,
                 ERRORS.Unauthorized
@@ -590,7 +604,7 @@ describe("ProTokenOperations", function () {
             await expect(
                 ctx.proTokenOperations
                     .connect(ctx.accounts.user1)
-                    .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, proof)
+                    .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, ctx.proofData.deadline, proof)
             ).to.be.revertedWithCustomError(
                 ctx.proTokenOperations,
                 ERRORS.InvalidAuthority
@@ -609,7 +623,7 @@ describe("ProTokenOperations", function () {
             await expect(
                 ctx.proTokenOperations
                     .connect(ctx.accounts.user1)
-                    .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, proof)
+                    .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, ctx.proofData.deadline, proof)
             ).to.be.revertedWithCustomError(
                 ctx.proTokenOperations,
                 ERRORS.InvalidAuthority
@@ -635,6 +649,7 @@ describe("ProTokenOperations", function () {
                     ZERO_ADDRESS
                 );
 
+            const deadline = await farFuture();
             const proofData: ProofData = {
                 requestId: 0n,
                 user: ctx.accounts.user1.address,
@@ -642,6 +657,7 @@ describe("ProTokenOperations", function () {
                 yAsset: ctx.yAssetAddress,
                 amount: HUNDRED_TOKENS,
                 minAmountOut: THOUSAND_TOKENS,
+                deadline,
                 proofKind: ProofKind.PROOF_OF_APPROVE,
             };
             const proof = await signMintProof(
@@ -653,7 +669,7 @@ describe("ProTokenOperations", function () {
             await expect(
                 ctx.proTokenOperations
                     .connect(ctx.accounts.user1)
-                    .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, proof)
+                    .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, deadline, proof)
             ).to.be.revertedWithCustomError(
                 ctx.proTokenOperations,
                 ERRORS.InsufficientAmountOut
@@ -673,8 +689,44 @@ describe("ProTokenOperations", function () {
             await expect(
                 ctx.proTokenOperations
                     .connect(ctx.accounts.user1)
-                    .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, proof)
+                    .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, ctx.proofData.deadline, proof)
             ).to.be.revertedWithCustomError(ctx.proTokenOperations, ERRORS.Paused);
+        });
+
+        it("reverts ProofExpired when the deadline has passed", async function () {
+            const ctx = await loadFixture(setupPendingMintRequest);
+            const past = BigInt(await time.latest()) - 1n;
+            const expiredData = { ...ctx.proofData, deadline: past };
+            const proof = await signMintProof(
+                ctx.accounts.authority,
+                ctx.proTokenOperationsAddress,
+                expiredData
+            );
+
+            await expect(
+                ctx.proTokenOperations
+                    .connect(ctx.accounts.user1)
+                    .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, past, proof)
+            ).to.be.revertedWithCustomError(ctx.proTokenOperations, ERRORS.ProofExpired);
+
+            // Expired proof leaves the request PENDING → re-signable.
+            expect((await ctx.proTokenOperations.mintRequests(0)).status).to.equal(1n);
+        });
+
+        it("reverts InvalidAuthority when the supplied deadline differs from the signed one", async function () {
+            const ctx = await loadFixture(setupPendingMintRequest);
+            const proof = await signMintProof(
+                ctx.accounts.authority,
+                ctx.proTokenOperationsAddress,
+                ctx.proofData
+            );
+            const tampered = ctx.proofData.deadline + 1000n;
+
+            await expect(
+                ctx.proTokenOperations
+                    .connect(ctx.accounts.user1)
+                    .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, tampered, proof)
+            ).to.be.revertedWithCustomError(ctx.proTokenOperations, ERRORS.InvalidAuthority);
         });
     });
 
@@ -735,6 +787,7 @@ describe("ProTokenOperations", function () {
                 .connect(ctx.accounts.user1)
                 .createMintRequest(ctx.yAssetAddress, HUNDRED_TOKENS, 0n, ZERO_ADDRESS);
 
+            const deadline = await farFuture();
             const proofData: ProofData = {
                 requestId: 0n,
                 user: ctx.accounts.user1.address,
@@ -742,6 +795,7 @@ describe("ProTokenOperations", function () {
                 yAsset: ctx.yAssetAddress,
                 amount: HUNDRED_TOKENS,
                 minAmountOut: 0n,
+                deadline,
                 proofKind: ProofKind.PROOF_OF_APPROVE,
             };
             const proof = await signMintProof(
@@ -752,7 +806,7 @@ describe("ProTokenOperations", function () {
 
             await ctx.proTokenOperations
                 .connect(ctx.accounts.user1)
-                .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, proof);
+                .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, deadline, proof);
 
             const proTokenBalance = await ctx.proToken.balanceOf(ctx.accounts.user1.address);
             return { ...ctx, proTokenBalance };
@@ -762,7 +816,7 @@ describe("ProTokenOperations", function () {
             const ctx = await loadFixture(setupUserWithProTokens);
 
             const balanceBefore = await ctx.proToken.balanceOf(ctx.accounts.user1.address);
-            const amount = balanceBefore; // full balance, well above the 100e18 floor
+            const amount = balanceBefore;
 
             await ctx.proToken
                 .connect(ctx.accounts.user1)
@@ -832,7 +886,6 @@ describe("ProTokenOperations", function () {
 
         it("reverts on withdrawal below the min floor (BelowMinWithdraw)", async function () {
             const ctx = await loadFixture(setupUserWithProTokens);
-            // 1 wei of proUSD is far below the 100e18 withdraw floor.
             await ctx.proToken
                 .connect(ctx.accounts.user1)
                 .approve(ctx.proTokenOperationsAddress, 1n);
@@ -862,11 +915,6 @@ describe("ProTokenOperations", function () {
 
     // =======================================================================
     // finalizeUnmintRequest
-    //
-    // The branching (instant vs queued) lives inside _executeUnmint after the
-    // proUSD burn. The default fixture has no yield protocol handlers, so yAsset
-    // sits unallocated on yOps and previewPayOut returns true → INSTANT path.
-    // Queued-path tests below first drain yOps via drainYAssetOps().
     // =======================================================================
     describe("finalizeUnmintRequest()", function () {
         async function setupPendingUnmintRequest() {
@@ -885,6 +933,7 @@ describe("ProTokenOperations", function () {
                 .connect(ctx.accounts.user1)
                 .createMintRequest(ctx.yAssetAddress, HUNDRED_TOKENS, 0n, ZERO_ADDRESS);
 
+            const mintDeadline = await farFuture();
             const mintProofData: ProofData = {
                 requestId: 0n,
                 user: ctx.accounts.user1.address,
@@ -892,6 +941,7 @@ describe("ProTokenOperations", function () {
                 yAsset: ctx.yAssetAddress,
                 amount: HUNDRED_TOKENS,
                 minAmountOut: 0n,
+                deadline: mintDeadline,
                 proofKind: ProofKind.PROOF_OF_APPROVE,
             };
             const mintProof = await signMintProof(
@@ -901,7 +951,7 @@ describe("ProTokenOperations", function () {
             );
             await ctx.proTokenOperations
                 .connect(ctx.accounts.user1)
-                .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, mintProof);
+                .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, mintDeadline, mintProof);
 
             const proTokenAmount = await ctx.proToken.balanceOf(ctx.accounts.user1.address);
             await ctx.proToken
@@ -912,6 +962,7 @@ describe("ProTokenOperations", function () {
                 .connect(ctx.accounts.user1)
                 .createUnmintRequest(ctx.yAssetAddress, proTokenAmount, 0n, ZERO_ADDRESS);
 
+            const unmintDeadline = await farFuture();
             const unmintProofData: ProofData = {
                 requestId: 0n,
                 user: ctx.accounts.user1.address,
@@ -919,6 +970,7 @@ describe("ProTokenOperations", function () {
                 yAsset: ctx.yAssetAddress,
                 amount: proTokenAmount,
                 minAmountOut: 0n,
+                deadline: unmintDeadline,
                 proofKind: ProofKind.PROOF_OF_APPROVE,
             };
 
@@ -940,9 +992,8 @@ describe("ProTokenOperations", function () {
 
             await ctx.proTokenOperations
                 .connect(ctx.accounts.user1)
-                .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_APPROVE, proof);
+                .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_APPROVE, ctx.unmintProofData.deadline, proof);
 
-            // proUSD burn happens on BOTH branches (instant + queued).
             expect(await ctx.proToken.totalSupply()).to.equal(
                 supplyBefore - ctx.proTokenAmount
             );
@@ -962,28 +1013,19 @@ describe("ProTokenOperations", function () {
                 ctx.unmintProofData
             );
 
-            // No drain → yOps has the minted yAsset → instant path.
             const recipientBefore = await ctx.yAsset.balanceOf(ctx.accounts.user1.address);
 
             const tx = ctx.proTokenOperations
                 .connect(ctx.accounts.user1)
-                .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_APPROVE, proof);
+                .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_APPROVE, ctx.unmintProofData.deadline, proof);
 
-            await expect(tx).to.emit(
-                ctx.proTokenOperations,
-                EVENTS.UnmintRequestFinalized
-            );
-            await expect(tx).to.emit(
-                ctx.proTokenOperations,
-                EVENTS.ProTokenUnmintInstant
-            );
+            await expect(tx).to.emit(ctx.proTokenOperations, EVENTS.UnmintRequestFinalized);
+            await expect(tx).to.emit(ctx.proTokenOperations, EVENTS.ProTokenUnmintInstant);
 
-            // Recipient received yAsset directly.
             expect(
                 await ctx.yAsset.balanceOf(ctx.accounts.user1.address),
             ).to.be.gt(recipientBefore);
 
-            // No batch created on the unmint handler.
             expect(
                 await ctx.proTokenUnmintHandler.getCurrentUnmintBatchId(ctx.yAssetAddress),
             ).to.equal(0n);
@@ -997,35 +1039,22 @@ describe("ProTokenOperations", function () {
                 ctx.unmintProofData
             );
 
-            // Drain → previewPayOut returns false → queued path.
             await drainYAssetOps(ctx);
 
             const recipientBefore = await ctx.yAsset.balanceOf(ctx.accounts.user1.address);
 
             const tx = ctx.proTokenOperations
                 .connect(ctx.accounts.user1)
-                .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_APPROVE, proof);
+                .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_APPROVE, ctx.unmintProofData.deadline, proof);
 
-            await expect(tx).to.emit(
-                ctx.proTokenOperations,
-                EVENTS.UnmintRequestFinalized
-            );
-            await expect(tx).to.emit(
-                ctx.proTokenOperations,
-                EVENTS.ProTokenUnmintQueued
-            );
-            // The handler emits its own UnmintRequestCreated event inside the same tx.
-            await expect(tx).to.emit(
-                ctx.proTokenUnmintHandler,
-                EVENTS.UnmintRequestCreated
-            );
+            await expect(tx).to.emit(ctx.proTokenOperations, EVENTS.UnmintRequestFinalized);
+            await expect(tx).to.emit(ctx.proTokenOperations, EVENTS.ProTokenUnmintQueued);
+            await expect(tx).to.emit(ctx.proTokenUnmintHandler, EVENTS.UnmintRequestCreated);
 
-            // Recipient did NOT receive yAsset yet — it's queued.
             expect(
                 await ctx.yAsset.balanceOf(ctx.accounts.user1.address),
             ).to.equal(recipientBefore);
 
-            // Handler now has a pending batch.
             expect(
                 await ctx.proTokenUnmintHandler.getCurrentUnmintBatchId(ctx.yAssetAddress),
             ).to.equal(1n);
@@ -1050,7 +1079,7 @@ describe("ProTokenOperations", function () {
 
             const tx = await ctx.proTokenOperations
                 .connect(ctx.accounts.user1)
-                .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_APPROVE, proof);
+                .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_APPROVE, ctx.unmintProofData.deadline, proof);
             const receipt = await tx.wait();
 
             const queuedEvent = receipt!.logs
@@ -1092,7 +1121,7 @@ describe("ProTokenOperations", function () {
 
             await ctx.proTokenOperations
                 .connect(ctx.accounts.user1)
-                .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_RETURN, proof);
+                .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_RETURN, ctx.unmintProofData.deadline, proof);
 
             const userAfter = await ctx.proToken.balanceOf(ctx.accounts.user1.address);
             expect(userAfter - userBefore).to.equal(ctx.proTokenAmount);
@@ -1108,12 +1137,12 @@ describe("ProTokenOperations", function () {
 
             await ctx.proTokenOperations
                 .connect(ctx.accounts.user1)
-                .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_APPROVE, proof);
+                .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_APPROVE, ctx.unmintProofData.deadline, proof);
 
             await expect(
                 ctx.proTokenOperations
                     .connect(ctx.accounts.user1)
-                    .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_APPROVE, proof)
+                    .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_APPROVE, ctx.unmintProofData.deadline, proof)
             ).to.be.revertedWithCustomError(
                 ctx.proTokenOperations,
                 ERRORS.RequestNotPending
@@ -1131,7 +1160,7 @@ describe("ProTokenOperations", function () {
             await expect(
                 ctx.proTokenOperations
                     .connect(ctx.accounts.user2)
-                    .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_APPROVE, proof)
+                    .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_APPROVE, ctx.unmintProofData.deadline, proof)
             ).to.be.revertedWithCustomError(
                 ctx.proTokenOperations,
                 ERRORS.Unauthorized
@@ -1149,7 +1178,7 @@ describe("ProTokenOperations", function () {
             await expect(
                 ctx.proTokenOperations
                     .connect(ctx.accounts.user1)
-                    .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_APPROVE, proof)
+                    .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_APPROVE, ctx.unmintProofData.deadline, proof)
             ).to.be.revertedWithCustomError(
                 ctx.proTokenOperations,
                 ERRORS.InvalidAuthority
@@ -1170,6 +1199,7 @@ describe("ProTokenOperations", function () {
                 .connect(ctx.accounts.user1)
                 .createMintRequest(ctx.yAssetAddress, HUNDRED_TOKENS, 0n, ZERO_ADDRESS);
 
+            const mintDeadline = await farFuture();
             const mintProofData: ProofData = {
                 requestId: 0n,
                 user: ctx.accounts.user1.address,
@@ -1177,6 +1207,7 @@ describe("ProTokenOperations", function () {
                 yAsset: ctx.yAssetAddress,
                 amount: HUNDRED_TOKENS,
                 minAmountOut: 0n,
+                deadline: mintDeadline,
                 proofKind: ProofKind.PROOF_OF_APPROVE,
             };
             const mintProof = await signMintProof(
@@ -1186,7 +1217,7 @@ describe("ProTokenOperations", function () {
             );
             await ctx.proTokenOperations
                 .connect(ctx.accounts.user1)
-                .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, mintProof);
+                .finalizeMintRequest(0n, ProofKind.PROOF_OF_APPROVE, mintDeadline, mintProof);
 
             const proTokenAmount = await ctx.proToken.balanceOf(ctx.accounts.user1.address);
             await ctx.proToken
@@ -1198,6 +1229,7 @@ describe("ProTokenOperations", function () {
                 .connect(ctx.accounts.user1)
                 .createUnmintRequest(ctx.yAssetAddress, proTokenAmount, tooHigh, ZERO_ADDRESS);
 
+            const deadline = await farFuture();
             const proofData: ProofData = {
                 requestId: 0n,
                 user: ctx.accounts.user1.address,
@@ -1205,6 +1237,7 @@ describe("ProTokenOperations", function () {
                 yAsset: ctx.yAssetAddress,
                 amount: proTokenAmount,
                 minAmountOut: tooHigh,
+                deadline,
                 proofKind: ProofKind.PROOF_OF_APPROVE,
             };
             const proof = await signUnmintProof(
@@ -1216,7 +1249,7 @@ describe("ProTokenOperations", function () {
             await expect(
                 ctx.proTokenOperations
                     .connect(ctx.accounts.user1)
-                    .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_APPROVE, proof)
+                    .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_APPROVE, deadline, proof)
             ).to.be.revertedWithCustomError(
                 ctx.proTokenOperations,
                 ERRORS.InsufficientAmountOut
@@ -1239,7 +1272,7 @@ describe("ProTokenOperations", function () {
             await expect(
                 ctx.proTokenOperations
                     .connect(ctx.accounts.user1)
-                    .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_APPROVE, proof)
+                    .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_APPROVE, ctx.unmintProofData.deadline, proof)
             ).to.be.revertedWithCustomError(
                 ctx.proTokenOperations,
                 ERRORS.InvalidUnmintAsset
@@ -1266,7 +1299,7 @@ describe("ProTokenOperations", function () {
             await expect(
                 ctx.proTokenOperations
                     .connect(ctx.accounts.user1)
-                    .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_RETURN, proof)
+                    .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_RETURN, ctx.unmintProofData.deadline, proof)
             ).to.not.be.reverted;
         });
 
@@ -1283,18 +1316,49 @@ describe("ProTokenOperations", function () {
             await expect(
                 ctx.proTokenOperations
                     .connect(ctx.accounts.user1)
-                    .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_APPROVE, proof)
+                    .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_APPROVE, ctx.unmintProofData.deadline, proof)
             ).to.be.revertedWithCustomError(ctx.proTokenOperations, ERRORS.Paused);
+        });
+
+        it("reverts ProofExpired when the deadline has passed", async function () {
+            const ctx = await loadFixture(setupPendingUnmintRequest);
+            const past = BigInt(await time.latest()) - 1n;
+            const expiredData = { ...ctx.unmintProofData, deadline: past };
+            const proof = await signUnmintProof(
+                ctx.accounts.authority,
+                ctx.proTokenOperationsAddress,
+                expiredData
+            );
+
+            await expect(
+                ctx.proTokenOperations
+                    .connect(ctx.accounts.user1)
+                    .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_APPROVE, past, proof)
+            ).to.be.revertedWithCustomError(ctx.proTokenOperations, ERRORS.ProofExpired);
+
+            expect((await ctx.proTokenOperations.unmintRequests(0)).status).to.equal(1n);
+        });
+
+        it("reverts InvalidAuthority when the supplied deadline differs from the signed one", async function () {
+            const ctx = await loadFixture(setupPendingUnmintRequest);
+            const proof = await signUnmintProof(
+                ctx.accounts.authority,
+                ctx.proTokenOperationsAddress,
+                ctx.unmintProofData
+            );
+            const tampered = ctx.unmintProofData.deadline + 1000n;
+
+            await expect(
+                ctx.proTokenOperations
+                    .connect(ctx.accounts.user1)
+                    .finalizeUnmintRequest(0n, ProofKind.PROOF_OF_APPROVE, tampered, proof)
+            ).to.be.revertedWithCustomError(ctx.proTokenOperations, ERRORS.InvalidAuthority);
         });
     });
 
     // =======================================================================
     // strategicMint / strategicUnmint (onlyStrategyVault)
-    //
-    // These are privileged paths callable only by the configured StrategyVault.
-    // strategicUnmint also branches instant/queued via previewPayOut, mirroring
-    // the user finalizeUnmintRequest path but without proof verification or the
-    // minWithdrawBase floor.
+    // (no proofs, no deadlines — unchanged)
     // =======================================================================
     describe("strategicMint() / strategicUnmint()", function () {
         it("strategicMint reverts for a non-vault caller", async function () {
@@ -1325,7 +1389,6 @@ describe("ProTokenOperations", function () {
 
         it("strategicMint reverts on zero amount (from the vault)", async function () {
             const ctx = await loadFixture(fullProtocolFixture);
-            // strategyVault is the registered vault signer in the fixture.
             await expect(
                 ctx.proTokenOperations
                     .connect(ctx.accounts.strategyVault)
@@ -1346,7 +1409,6 @@ describe("ProTokenOperations", function () {
             const ctx = await loadFixture(fullProtocolFixture);
             const vault = ctx.accounts.strategyVault;
 
-            // Fund the vault with yAsset and approve Operations to pull it.
             await ctx.yAsset.mint(vault.address, HUNDRED_TOKENS);
             await ctx.yAsset
                 .connect(vault)
@@ -1365,7 +1427,6 @@ describe("ProTokenOperations", function () {
                     .strategicMint(HUNDRED_TOKENS, ctx.yAssetAddress)
             ).to.emit(ctx.proTokenOperations, EVENTS.StrategicMint);
 
-            // yAsset routed to the handler; proUSD minted to the vault (recipient = msg.sender).
             expect(
                 (await ctx.yAsset.balanceOf(ctx.yAssetOperationsHandlerAddress)) - handlerBefore
             ).to.equal(HUNDRED_TOKENS);
@@ -1379,7 +1440,6 @@ describe("ProTokenOperations", function () {
             const ctx = await loadFixture(fullProtocolFixture);
             const vault = ctx.accounts.strategyVault;
 
-            // strategicMint so the vault holds proUSD and the handler holds yAsset (instant available).
             await ctx.yAsset.mint(vault.address, HUNDRED_TOKENS);
             await ctx.yAsset
                 .connect(vault)
@@ -1399,11 +1459,9 @@ describe("ProTokenOperations", function () {
                     .strategicUnmint(ctx.yAssetAddress, vaultPro, dest)
             ).to.emit(ctx.proTokenOperations, EVENTS.StrategicUnmintInstant);
 
-            // proUSD burned from the vault; yAsset delivered to destination.
             expect(await ctx.proToken.totalSupply()).to.equal(supplyBefore - vaultPro);
             expect(await ctx.yAsset.balanceOf(dest)).to.be.gt(destBefore);
 
-            // No handler batch created — instant path.
             expect(
                 await ctx.proTokenUnmintHandler.getCurrentUnmintBatchId(ctx.yAssetAddress),
             ).to.equal(0n);
@@ -1413,7 +1471,6 @@ describe("ProTokenOperations", function () {
             const ctx = await loadFixture(fullProtocolFixture);
             const vault = ctx.accounts.strategyVault;
 
-            // strategicMint to seed vault with proUSD.
             await ctx.yAsset.mint(vault.address, HUNDRED_TOKENS);
             await ctx.yAsset
                 .connect(vault)
@@ -1422,7 +1479,6 @@ describe("ProTokenOperations", function () {
                 .connect(vault)
                 .strategicMint(HUNDRED_TOKENS, ctx.yAssetAddress);
 
-            // Drain yOps so previewPayOut returns false → queued.
             await drainYAssetOps(ctx);
 
             const vaultPro = await ctx.proToken.balanceOf(vault.address);
@@ -1434,21 +1490,12 @@ describe("ProTokenOperations", function () {
                 .connect(vault)
                 .strategicUnmint(ctx.yAssetAddress, vaultPro, dest);
 
-            await expect(tx).to.emit(
-                ctx.proTokenOperations,
-                EVENTS.StrategicUnmintQueued
-            );
-            await expect(tx).to.emit(
-                ctx.proTokenUnmintHandler,
-                EVENTS.UnmintRequestCreated
-            );
+            await expect(tx).to.emit(ctx.proTokenOperations, EVENTS.StrategicUnmintQueued);
+            await expect(tx).to.emit(ctx.proTokenUnmintHandler, EVENTS.UnmintRequestCreated);
 
-            // proUSD burned regardless of path.
             expect(await ctx.proToken.totalSupply()).to.equal(supplyBefore - vaultPro);
-            // destination did NOT receive yAsset yet.
             expect(await ctx.yAsset.balanceOf(dest)).to.equal(destBefore);
 
-            // Handler batch exists for the destination.
             expect(
                 await ctx.proTokenUnmintHandler.getCurrentUnmintBatchId(ctx.yAssetAddress),
             ).to.equal(1n);
@@ -1458,9 +1505,6 @@ describe("ProTokenOperations", function () {
                     1n,
                     dest,
                 );
-            // The first queued request in a fresh fixture has id 0 — don't assert
-            // requestId > 0. Confirm the request exists by reading the struct and
-            // checking the receiver matches.
             const req = await ctx.proTokenUnmintHandler.getUnmintRequest(
                 ctx.yAssetAddress,
                 requestId,
@@ -1515,15 +1559,9 @@ describe("ProTokenOperations", function () {
         });
 
         it("strategicUnmint: no minWithdrawBase floor (sub-floor amount succeeds where user path would revert)", async function () {
-            // The user path enforces minWithdrawBase at createUnmintRequest; strategicUnmint
-            // intentionally skips it because the vault is privileged. This test exercises
-            // that asymmetry: a 1-wei strategist unmint succeeds end-to-end (instant path
-            // with sufficient yOps liquidity), while the same amount from a user would
-            // revert with BelowMinWithdraw at request creation.
             const ctx = await loadFixture(fullProtocolFixture);
             const vault = ctx.accounts.strategyVault;
 
-            // Seed: vault has proUSD, handler has yAsset (instant available).
             await ctx.yAsset.mint(vault.address, HUNDRED_TOKENS);
             await ctx.yAsset
                 .connect(vault)
@@ -1532,7 +1570,6 @@ describe("ProTokenOperations", function () {
                 .connect(vault)
                 .strategicMint(HUNDRED_TOKENS, ctx.yAssetAddress);
 
-            // 1 wei is far below the 100e18 floor — no revert from strategist path.
             await expect(
                 ctx.proTokenOperations
                     .connect(vault)
@@ -1561,11 +1598,9 @@ describe("ProTokenOperations", function () {
     });
 
     // =======================================================================
-    // USD Cap
+    // usdCap semantics (no proofs — unchanged)
     // =======================================================================
     describe("usdCap semantics", function () {
-        // Registers a second 18-dec yAsset at the given static price, cap $1,
-        // fee 0, unmint-eligible, with its own funded yOps handler.
         async function registerCappedAsset(ctx: FullProtocolFixture, staticPrice: bigint) {
             const asset = await deployMintableERC20("Capped", "CAP", DECIMALS_18);
             const assetAddr = await asset.getAddress();
@@ -1584,7 +1619,6 @@ describe("ProTokenOperations", function () {
             await ctx.proTokenSettings.connect(ctx.accounts.admin)
                 .setUnmintYAssets([ctx.yAssetAddress, assetAddr]);
 
-            // Liquidity so unmint takes the instant path.
             await asset.mint(handlerAddr, THOUSAND_TOKENS);
             return { asset, assetAddr, handler, handlerAddr };
         }
@@ -1596,7 +1630,6 @@ describe("ProTokenOperations", function () {
 
             const out = await ctx.proTokenOperations
                 .simulateMintProToken.staticCall(assetAddr, HUNDRED_TOKENS);
-            // capped: 100 * $1 / $1(proUSD) = 100e18, NOT 103e18
             expect(out).to.equal(HUNDRED_TOKENS);
         });
 
@@ -1628,10 +1661,6 @@ describe("ProTokenOperations", function () {
                 .strategicUnmint(assetAddr, HUNDRED_TOKENS, dest);
             const received = (await asset.balanceOf(dest)) - before;
 
-            // Divisor is max(price, cap) = $1.03: 100e18 * 1e18 / 1.03e18.
-            // Under the old min(price, cap) this paid 100e18 — a $3 depeg-premium
-            // extraction per 100 proUSD. This assertion is the polarity pin: if it
-            // ever reads 100e18 again, the min bug is back.
             expect(received).to.equal((HUNDRED_TOKENS * ONE_USD) / price103);
         });
     });
@@ -1664,7 +1693,7 @@ describe("ProTokenOperations", function () {
     });
 
     // =======================================================================
-    // _authorizeUpgrade (UUPS)
+    // _authorizeUpgrade (UUPS) — unchanged
     // =======================================================================
     describe("_authorizeUpgrade (UUPS)", function () {
         it("admin can upgrade to higher VERSION", async function () {

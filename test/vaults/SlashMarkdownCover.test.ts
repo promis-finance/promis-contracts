@@ -62,6 +62,11 @@ import {
 //
 // Fixture requirements: deployProTokenSettings takes (admin, operator,
 // priceOperator) under the split price-authority model.
+//
+// PROOF DEADLINES: every EIP-712 proof (DepositProof / WithdrawProof) carries
+// a `deadline`, which is part of the signed struct AND passed as the third
+// argument to the finalize functions. The flow helpers below sign and pass an
+// explicit deadline (a wide TTL so intra-test time travel never expires one).
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -80,6 +85,7 @@ const DEPOSIT_PROOF_TYPES = {
         { name: "amount", type: "uint256" },
         { name: "user", type: "address" },
         { name: "unlockedPositionsToMerge", type: "uint256[]" },
+        { name: "deadline", type: "uint256" },
         { name: "proofKind", type: "uint8" },
     ],
 };
@@ -90,6 +96,7 @@ const WITHDRAW_PROOF_TYPES = {
         { name: "positionIDs", type: "uint256[]" },
         { name: "user", type: "address" },
         { name: "unlockedPositionsToMerge", type: "uint256[]" },
+        { name: "deadline", type: "uint256" },
         { name: "proofKind", type: "uint8" },
     ],
 };
@@ -97,6 +104,16 @@ const WITHDRAW_PROOF_TYPES = {
 async function buildVaultDomain(verifyingContract: string) {
     const chainId = (await ethers.provider.getNetwork()).chainId;
     return { name: "ProTokenPlus", version: "1", chainId, verifyingContract };
+}
+
+/// Default proof validity window used by the flow helpers. Wide enough that
+/// intra-test `time.increase` calls (lock expiry, unbonding) never expire a
+/// proof that is finalized immediately after signing.
+const PROOF_TTL = BigInt(ONE_DAY);
+
+/// A deadline `ttl` seconds past the current chain time.
+async function futureDeadline(ttl: bigint = PROOF_TTL): Promise<bigint> {
+    return BigInt(await time.latest()) + ttl;
 }
 
 // ---------------------------------------------------------------------------
@@ -307,6 +324,7 @@ async function depositFor(
         .find((e) => e?.name === "DepositRequestCreated");
     const requestId = createEvent!.args.requestID as bigint;
 
+    const deadline = await futureDeadline();
     const domain = await buildVaultDomain(ctx.proTokenPlusAddress);
     const proof = await ctx.accounts.authority.signTypedData(domain, DEPOSIT_PROOF_TYPES, {
         requestId,
@@ -314,12 +332,13 @@ async function depositFor(
         amount,
         user: user.address,
         unlockedPositionsToMerge: [],
+        deadline,
         proofKind: VaultProofKind.PROOF_OF_APPROVE,
     });
 
     const finalizeTx = await ctx.proTokenPlus
         .connect(user)
-        .finalizeDepositRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, proof);
+        .finalizeDepositRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, deadline, proof);
     const finalizeReceipt = await finalizeTx.wait();
     const finalizeEvent = finalizeReceipt!.logs
         .map((l) => { try { return ctx.proTokenPlus.interface.parseLog(l as never); } catch { return null; } })
@@ -341,18 +360,20 @@ async function withdrawFor(
         .find((e) => e?.name === "WithdrawRequestCreated");
     const requestId = createEvent!.args.requestID as bigint;
 
+    const deadline = await futureDeadline();
     const domain = await buildVaultDomain(ctx.proTokenPlusAddress);
     const proof = await ctx.accounts.authority.signTypedData(domain, WITHDRAW_PROOF_TYPES, {
         requestId,
         positionIDs: positionIds,
         user: user.address,
         unlockedPositionsToMerge: [],
+        deadline,
         proofKind: VaultProofKind.PROOF_OF_APPROVE,
     });
 
     const finalizeTx = await ctx.proTokenPlus
         .connect(user)
-        .finalizeWithdrawRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, proof);
+        .finalizeWithdrawRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, deadline, proof);
     const finalizeReceipt = await finalizeTx.wait();
     const finalizeEvent = finalizeReceipt!.logs
         .map((l) => { try { return ctx.proTokenPlus.interface.parseLog(l as never); } catch { return null; } })

@@ -40,6 +40,14 @@ import {
 //   - Min deposit / withdraw are enforced in base (USD) terms: 100e18 each,
 //     i.e. at least 100 USDC to mint and at least 100 proToken to redeem.
 //
+// PROOF DEADLINES:
+// finalizeMintRequest / finalizeUnmintRequest now take a `_deadline` that is
+// part of the signed EIP-712 struct (MintProof / UnmintProof both gained a
+// `uint256 deadline` field) and is checked on-chain against block.timestamp
+// (ProofExpired). All helpers here sign with a comfortably-future deadline
+// (now + 1h) via proofDeadline(). Expiry-behaviour coverage itself belongs to
+// the per-contract ProTokenOperations tests, not this scenario file.
+//
 // BRANCHING NOTE (instant vs queued unmint):
 // After the unmint refactor, ProTokenOperations._executeUnmint and strategicUnmint
 // branch on YAssetOperationsHandler.previewPayOut(amount). With the default
@@ -55,6 +63,11 @@ import {
 // ---------------------------------------------------------------------------
 // Reusable helpers (local — same shape as the per-contract test files)
 // ---------------------------------------------------------------------------
+
+/** Standard signing deadline: one hour past the current chain timestamp. */
+async function proofDeadline(): Promise<bigint> {
+    return BigInt(await time.latest()) + 3600n;
+}
 
 /**
  * Drain all unallocated yAsset from the YAssetOperationsHandler for `yAssetAddr`.
@@ -115,6 +128,7 @@ async function mintProTokensFor(
         .find((e) => e?.name === EVENTS.MintRequestCreated);
     const requestId = event!.args.requestID as bigint;
 
+    const deadline = await proofDeadline();
     const proofData: ProofData = {
         requestId,
         user: user.address,
@@ -122,6 +136,7 @@ async function mintProTokensFor(
         yAsset: yAssetAddr,
         amount,
         minAmountOut: 0n,
+        deadline,
         proofKind: ProofKind.PROOF_OF_APPROVE,
     };
     const proof = await signMintProof(
@@ -131,7 +146,12 @@ async function mintProTokensFor(
     );
     await ctx.proTokenOperations
         .connect(user)
-        .finalizeMintRequest(requestId, ProofKind.PROOF_OF_APPROVE, proof);
+        .finalizeMintRequest(
+            requestId,
+            ProofKind.PROOF_OF_APPROVE,
+            deadline,
+            proof,
+        );
 
     return ctx.proToken.balanceOf(user.address);
 }
@@ -172,6 +192,7 @@ async function createUnmintFor(
         .find((e) => e?.name === EVENTS.UnmintRequestCreated);
     const opsRequestId = event!.args.requestID as bigint;
 
+    const deadline = await proofDeadline();
     const proofData: ProofData = {
         requestId: opsRequestId,
         user: user.address,
@@ -179,6 +200,7 @@ async function createUnmintFor(
         yAsset: yAssetAddr,
         amount: proTokenAmount,
         minAmountOut: 0n,
+        deadline,
         proofKind: ProofKind.PROOF_OF_APPROVE,
     };
     const proof = await signUnmintProof(
@@ -188,7 +210,12 @@ async function createUnmintFor(
     );
     await ctx.proTokenOperations
         .connect(user)
-        .finalizeUnmintRequest(opsRequestId, ProofKind.PROOF_OF_APPROVE, proof);
+        .finalizeUnmintRequest(
+            opsRequestId,
+            ProofKind.PROOF_OF_APPROVE,
+            deadline,
+            proof,
+        );
 
     const currentBatchId = await ctx.proTokenUnmintHandler.getCurrentUnmintBatchId(
         yAssetAddr,
@@ -378,6 +405,7 @@ describe("Multi-yAsset Scenarios", function () {
                 .find((e) => e?.name === EVENTS.UnmintRequestCreated)!.args
                 .requestID) as bigint;
 
+            const deadline = await proofDeadline();
             const proof = await signUnmintProof(
                 ctx.accounts.authority,
                 ctx.proTokenOperationsAddress,
@@ -388,6 +416,7 @@ describe("Multi-yAsset Scenarios", function () {
                     yAsset: ctx.usdc.tokenAddr,
                     amount: hundredProToken,
                     minAmountOut: 0n,
+                    deadline,
                     proofKind: ProofKind.PROOF_OF_APPROVE,
                 },
             );
@@ -396,7 +425,12 @@ describe("Multi-yAsset Scenarios", function () {
             await expect(
                 ctx.proTokenOperations
                     .connect(ctx.accounts.user1)
-                    .finalizeUnmintRequest(opsRequestId, ProofKind.PROOF_OF_APPROVE, proof),
+                    .finalizeUnmintRequest(
+                        opsRequestId,
+                        ProofKind.PROOF_OF_APPROVE,
+                        deadline,
+                        proof,
+                    ),
             ).to.emit(ctx.proTokenOperations, EVENTS.ProTokenUnmintInstant);
             const after = await ctx.usdc.token.balanceOf(ctx.accounts.user1.address);
 
@@ -743,6 +777,7 @@ describe("Multi-yAsset Scenarios", function () {
                 })
                 .find((e) => e?.name === EVENTS.UnmintRequestCreated)!.args
                 .requestID) as bigint;
+            const deadline = await proofDeadline();
             const proof = await signUnmintProof(
                 ctx.accounts.authority,
                 ctx.proTokenOperationsAddress,
@@ -753,12 +788,18 @@ describe("Multi-yAsset Scenarios", function () {
                     yAsset: ctx.yAssetAddress,
                     amount: user1Bal,
                     minAmountOut: 0n,
+                    deadline,
                     proofKind: ProofKind.PROOF_OF_APPROVE,
                 },
             );
             await ctx.proTokenOperations
                 .connect(ctx.accounts.user1)
-                .finalizeUnmintRequest(opsRequestId, ProofKind.PROOF_OF_APPROVE, proof);
+                .finalizeUnmintRequest(
+                    opsRequestId,
+                    ProofKind.PROOF_OF_APPROVE,
+                    deadline,
+                    proof,
+                );
 
             // Neither yAsset has a batch — 18-dec went instant; USDC saw no activity.
             expect(

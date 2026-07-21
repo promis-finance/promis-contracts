@@ -49,10 +49,10 @@ contract ProTokenPlusOperations is
     uint256 public constant VERSION = 1_00_00;
     uint256 constant SECONDS_PER_YEAR = 365 days;
     bytes32 constant DEPOSIT_PROOF_TYPEHASH = keccak256(
-        "DepositProof(uint256 requestId,uint8 tierID,uint256 amount,address user,uint256[] unlockedPositionsToMerge,uint8 proofKind)"
+        "DepositProof(uint256 requestId,uint8 tierID,uint256 amount,address user,uint256[] unlockedPositionsToMerge,uint256 deadline,uint8 proofKind)"
     );
     bytes32 constant WITHDRAW_PROOF_TYPEHASH = keccak256(
-        "WithdrawProof(uint256 requestId,uint256[] positionIDs,address user,uint256[] unlockedPositionsToMerge,uint8 proofKind)"
+        "WithdrawProof(uint256 requestId,uint256[] positionIDs,address user,uint256[] unlockedPositionsToMerge,uint256 deadline,uint8 proofKind)"
     );
 
     // ================================================
@@ -122,6 +122,7 @@ contract ProTokenPlusOperations is
         address _caller,
         uint256 _requestID, 
         ProTokenPlusTypes.ProofKind _proofKind, 
+        uint256 _deadline,
         bytes calldata _proof
     ) external onlyDelegatecall returns (uint256 positionID) {
         if (_caller != msg.sender) revert CallerMismatch();
@@ -138,14 +139,13 @@ contract ProTokenPlusOperations is
                 request.amount,
                 request.user,
                 keccak256(abi.encodePacked(request.unlockedPositionsToMerge)),
+                _deadline,
                 uint8(_proofKind)
             )
         );
 
-        _verifyProof(
-            structHash,
-            _proof
-        );
+        _verifyProof(structHash, _proof);
+        if (block.timestamp > _deadline) revert ProofExpired();
 
         request.status = ProTokenPlusTypes.Status.EXECUTED;
         totalPendingDeposits -= request.amount;
@@ -243,6 +243,7 @@ contract ProTokenPlusOperations is
         address _caller,
         uint256 _requestID, 
         ProTokenPlusTypes.ProofKind _proofKind, 
+        uint256 _deadline,
         bytes calldata _proof
     ) external onlyDelegatecall returns (uint256 unbondingIndex) {
         if (_caller != msg.sender) revert CallerMismatch();
@@ -260,14 +261,13 @@ contract ProTokenPlusOperations is
                 keccak256(abi.encodePacked(request.positionIDs)),
                 request.user,
                 keccak256(abi.encodePacked(request.unlockedPositionsToMerge)),
+                _deadline,
                 uint8(_proofKind)
             )
         );
 
-        _verifyProof(
-            structHash,
-            _proof
-        );
+        _verifyProof(structHash, _proof);
+        if (block.timestamp > _deadline) revert ProofExpired();
 
         request.status = ProTokenPlusTypes.Status.EXECUTED;
 
