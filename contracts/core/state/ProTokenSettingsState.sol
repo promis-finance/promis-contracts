@@ -38,9 +38,6 @@ abstract contract ProTokenSettingsState {
     /// @notice StrategyVault contract (proUSD+ custody and strategist drawdown).
     address internal strategyVault;
 
-    /// @notice Price configuration for proUSD.
-    ProTokenSettingsTypes.ProTokenPriceSettings internal proTokenPriceSettings;
-
     /// @notice Set of registered yAsset addresses.
     EnumerableSet.AddressSet internal yAssets;
 
@@ -55,6 +52,9 @@ abstract contract ProTokenSettingsState {
 
     /// @notice Addresses authorized to sign EIP-712 proofs.
     mapping(address => bool) internal authority;
+
+    /// @notice PriceOperator role (automated multisig) for routine price update operations.
+    address internal priceOperator;
 
     /// @notice Reserved storage for future upgrades.
     uint256[34] internal __gap;

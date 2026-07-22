@@ -175,7 +175,7 @@ contract ProTokenUnmintHandler is
         // Open a new batch if the current one is processed, expired, or none exists yet.
         if (
             curBatch.processed ||
-            curBatch.createTimestamp + unmintBatchDuration < block.timestamp ||
+            curBatch.createTimestamp + unmintBatchDuration <= block.timestamp ||
             curBatchId == 0
         ) {
             unchecked { curBatchId = ++curUnmintBatchIdPerYAsset[yAsset]; }
@@ -187,6 +187,7 @@ contract ProTokenUnmintHandler is
         }
 
         curBatch.totalAmount += amount;
+        unpaidQueuedLiability[yAsset] += amount;
 
         if (unclaimedUnmintBatchesPerReceiver[receiver][yAsset].contains(curBatchId)) {
             uint256 existingRequestId =
@@ -256,6 +257,9 @@ contract ProTokenUnmintHandler is
         // mark as processed
         unmintBatch.processed = true;
         unmintBatch.processTimestamp = block.timestamp;
+        uint256 t = unmintBatch.totalAmount;
+        unpaidQueuedLiability[yAsset] = t >= unpaidQueuedLiability[yAsset]
+            ? 0 : unpaidQueuedLiability[yAsset] - t;
 
         // transfer the total amount from msg.sender to this contract
         IERC20(yAsset).safeTransferFrom(
@@ -381,6 +385,11 @@ contract ProTokenUnmintHandler is
         address receiver
     ) external view returns (uint256) {
         return unmintRequestIdForReceiverInBatch[yAsset][batchId][receiver];
+    }
+
+    /// @inheritdoc IProTokenUnmintHandler
+    function getUnpaidQueuedLiability(address yAsset) external view returns (uint256) {
+        return unpaidQueuedLiability[yAsset];
     }
 
     /// @inheritdoc IProTokenUnmintHandler

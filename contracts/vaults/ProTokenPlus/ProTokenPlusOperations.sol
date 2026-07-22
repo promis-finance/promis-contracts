@@ -150,10 +150,12 @@ contract ProTokenPlusOperations is
         request.status = ProTokenPlusTypes.Status.EXECUTED;
         totalPendingDeposits -= request.amount;
 
-        // Merge unlocked positions if provided (aggregates before main action)
-        _mergeUnlockedIfProvided(request.user, request.unlockedPositionsToMerge);
+        
 
         if (_proofKind == ProTokenPlusTypes.ProofKind.PROOF_OF_APPROVE) {
+            // Merge unlocked positions if provided (aggregates before main action)
+            _mergeUnlockedIfProvided(request.user, request.unlockedPositionsToMerge);
+            
             positionID = _executeDeposit(
                 request.user, request.tierID, request.amount
             );
@@ -320,6 +322,9 @@ contract ProTokenPlusOperations is
         // Update global accounting
         userUnbondingCount[caller]++;
         totalUnbonding += totalAvailable;
+
+        address strategyVault = IProTokenSettings(proTokenSettings).getStrategyVault();
+        IStrategyVault(strategyVault).earmark(request.amount);
 
         // Track active unbonding index for efficient UI queries
         activeUnbondingIndices[caller].push(unbondingIndex);

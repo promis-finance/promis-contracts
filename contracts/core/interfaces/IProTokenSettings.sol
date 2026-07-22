@@ -36,10 +36,18 @@ interface IProTokenSettings {
     /**
      * @notice Updates the operator address that can perform operational functions
      * @dev The operator has limited privileges compared to admin, typically for routine
-     *      operations like updating LST ratios without requiring full admin access.
+     *      operations.
      * @param _operator Address of the new operator
      */
     function setOperator(address _operator) external;
+
+    /**
+     * @notice Updates the price operator address that can perform price operational functions
+     * @dev The price operator has limited privileges compared to admin and operator, typically 
+     *      for routine price updates.
+     * @param _priceOperator Address of the new price operator
+     */
+    function setPriceOperator(address _priceOperator) external;
 
     /**
      * @notice Updates the externalBusiness address that can manipulate funds from yield
@@ -52,18 +60,6 @@ interface IProTokenSettings {
      * @param _strategist Address of the new strategist
      */
     function setStrategist(address _strategist) external;
-
-    /**
-     * @notice Configures price settings for the pro token
-     * @dev Price settings determine how the pro token's value is calculated.
-     *      Get the price directly from the contract can only be used on the chain the price is being pushed on (with getDollarPrice()).
-     *      The other chains will need to use oracle price source
-     * @param _proTokenPriceSettings Struct containing price configuration:
-     *        - oraclePriceSource: Address of price oracle contract (zero address if not using oracle)
-     */
-    function setProTokenPriceSettings(
-        ProTokenSettingsTypes.ProTokenPriceSettings memory _proTokenPriceSettings
-    ) external;
 
     /**
      * @notice Sets the address of the pro token operations contract
@@ -173,6 +169,12 @@ interface IProTokenSettings {
      * @return operator Address of the current operator with limited operational privileges
      */
     function getOperator() external view returns (address operator);
+
+    /**
+     * @notice Returns the current price operator address
+     * @return priceOperator Address of the current price operator with only price operational privileges
+     */
+    function getPriceOperator() external view returns (address priceOperator);
 
     /**
      * @notice Returns the current externalBusiness address
@@ -296,6 +298,16 @@ interface IProTokenSettings {
     );
 
     /**
+     * @notice Emitted when the price operator address is changed
+     * @param previousPriceOperator Address of the previous price operator
+     * @param newPriceOperator Address of the new price operator
+     */
+    event PriceOperatorSet (
+        address indexed previousPriceOperator,
+        address indexed newPriceOperator
+    );
+
+    /**
      * @notice Emitted when pro token price settings are modified
      * @param oraclePriceSource oracle contract addresses (empty if not used)
      */
@@ -398,6 +410,8 @@ interface IProTokenSettings {
     // ================================================
 
     error ZeroAddress();
+    error MaxFeeExceeded();
+    error ZeroUsdCap();
     error NotAdmin();
     error NotAdminOrOperator();
     error LengthMismatch();
@@ -412,4 +426,5 @@ interface IProTokenSettings {
     error YAssetNotFound(address yAsset);
     error YAssetInUseForUnmint(address yAsset);
     error YOperationsHandlerInUseBalanceNotZero();
+    error HandlerAssetMismatch();
 }

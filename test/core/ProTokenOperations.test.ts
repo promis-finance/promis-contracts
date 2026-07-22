@@ -1561,6 +1561,82 @@ describe("ProTokenOperations", function () {
     });
 
     // =======================================================================
+    // USD Cap
+    // =======================================================================
+    describe("usdCap semantics", function () {
+        // Registers a second 18-dec yAsset at the given static price, cap $1,
+        // fee 0, unmint-eligible, with its own funded yOps handler.
+        async function registerCappedAsset(ctx: FullProtocolFixture, staticPrice: bigint) {
+            const asset = await deployMintableERC20("Capped", "CAP", DECIMALS_18);
+            const assetAddr = await asset.getAddress();
+            const handler = await deployYAssetOperationsHandler(
+                ctx.proTokenSettingsAddress, assetAddr
+            );
+            const handlerAddr = await handler.getAddress();
+
+            const base = createDefaultYAssetSettings(handlerAddr, DECIMALS_18, staticPrice);
+            const settings = {
+                ...base,
+                priceSettings: { ...base.priceSettings, usdCap: ONE_USD },
+            };
+            await ctx.proTokenSettings.connect(ctx.accounts.admin)
+                .setYAsset(assetAddr, settings);
+            await ctx.proTokenSettings.connect(ctx.accounts.admin)
+                .setUnmintYAssets([ctx.yAssetAddress, assetAddr]);
+
+            // Liquidity so unmint takes the instant path.
+            await asset.mint(handlerAddr, THOUSAND_TOKENS);
+            return { asset, assetAddr, handler, handlerAddr };
+        }
+
+        it("mint values the yAsset at min(price, cap): $1.03 asset credited at $1", async function () {
+            const ctx = await loadFixture(fullProtocolFixture);
+            const price103 = (ONE_USD * 103n) / 100n;
+            const { assetAddr } = await registerCappedAsset(ctx, price103);
+
+            const out = await ctx.proTokenOperations
+                .simulateMintProToken.staticCall(assetAddr, HUNDRED_TOKENS);
+            // capped: 100 * $1 / $1(proUSD) = 100e18, NOT 103e18
+            expect(out).to.equal(HUNDRED_TOKENS);
+        });
+
+        it("mint below cap is uncapped: $0.97 asset credited at $0.97", async function () {
+            const ctx = await loadFixture(fullProtocolFixture);
+            const price097 = (ONE_USD * 97n) / 100n;
+            const { assetAddr } = await registerCappedAsset(ctx, price097);
+
+            const out = await ctx.proTokenOperations
+                .simulateMintProToken.staticCall(assetAddr, HUNDRED_TOKENS);
+            expect(out).to.equal((HUNDRED_TOKENS * 97n) / 100n);
+        });
+
+        it("unmint values the yAsset at max(price, cap): $1.03 asset pays at $1.03 (no depeg premium)", async function () {
+            const ctx = await loadFixture(fullProtocolFixture);
+            const price103 = (ONE_USD * 103n) / 100n;
+            const { asset, assetAddr } = await registerCappedAsset(ctx, price103);
+
+            const vault = ctx.accounts.strategyVault;
+            await ctx.yAsset.mint(vault.address, HUNDRED_TOKENS);
+            await ctx.yAsset.connect(vault)
+                .approve(ctx.proTokenOperationsAddress, HUNDRED_TOKENS);
+            await ctx.proTokenOperations.connect(vault)
+                .strategicMint(HUNDRED_TOKENS, ctx.yAssetAddress);
+
+            const dest = ctx.accounts.user1.address;
+            const before = await asset.balanceOf(dest);
+            await ctx.proTokenOperations.connect(vault)
+                .strategicUnmint(assetAddr, HUNDRED_TOKENS, dest);
+            const received = (await asset.balanceOf(dest)) - before;
+
+            // Divisor is max(price, cap) = $1.03: 100e18 * 1e18 / 1.03e18.
+            // Under the old min(price, cap) this paid 100e18 — a $3 depeg-premium
+            // extraction per 100 proUSD. This assertion is the polarity pin: if it
+            // ever reads 100e18 again, the min bug is back.
+            expect(received).to.equal((HUNDRED_TOKENS * ONE_USD) / price103);
+        });
+    });
+
+    // =======================================================================
     // View functions
     // =======================================================================
     describe("View functions", function () {

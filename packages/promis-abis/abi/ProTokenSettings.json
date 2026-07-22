@@ -53,12 +53,22 @@
   },
   {
     "inputs": [],
+    "name": "HandlerAssetMismatch",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "InvalidInitialization",
     "type": "error"
   },
   {
     "inputs": [],
     "name": "LengthMismatch",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "MaxFeeExceeded",
     "type": "error"
   },
   {
@@ -173,6 +183,11 @@
   {
     "inputs": [],
     "name": "ZeroSources",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ZeroUsdCap",
     "type": "error"
   },
   {
@@ -313,6 +328,25 @@
       }
     ],
     "name": "Paused",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "previousPriceOperator",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "newPriceOperator",
+        "type": "address"
+      }
+    ],
+    "name": "PriceOperatorSet",
     "type": "event"
   },
   {
@@ -509,6 +543,19 @@
   },
   {
     "inputs": [],
+    "name": "MAX_UNMINT_FEE",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "UPGRADE_INTERFACE_VERSION",
     "outputs": [
       {
@@ -601,6 +648,19 @@
   },
   {
     "inputs": [],
+    "name": "getPriceOperator",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "getProTokenInfo",
     "outputs": [
       {
@@ -619,18 +679,6 @@
             "internalType": "address",
             "name": "proTokenUnmintHandler",
             "type": "address"
-          },
-          {
-            "components": [
-              {
-                "internalType": "address",
-                "name": "oraclePriceSource",
-                "type": "address"
-              }
-            ],
-            "internalType": "struct ProTokenSettingsTypes.ProTokenPriceSettings",
-            "name": "priceSettings",
-            "type": "tuple"
           }
         ],
         "internalType": "struct ProTokenSettingsTypes.GetProTokenInfoResponse",
@@ -777,6 +825,11 @@
       {
         "internalType": "address",
         "name": "_operator",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "_priceOperator",
         "type": "address"
       }
     ],
@@ -937,6 +990,19 @@
     "inputs": [
       {
         "internalType": "address",
+        "name": "_priceOperator",
+        "type": "address"
+      }
+    ],
+    "name": "setPriceOperator",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
         "name": "_proToken",
         "type": "address"
       }
@@ -955,26 +1021,6 @@
       }
     ],
     "name": "setProTokenOperations",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "components": [
-          {
-            "internalType": "address",
-            "name": "oraclePriceSource",
-            "type": "address"
-          }
-        ],
-        "internalType": "struct ProTokenSettingsTypes.ProTokenPriceSettings",
-        "name": "_proTokenPriceSettings",
-        "type": "tuple"
-      }
-    ],
-    "name": "setProTokenPriceSettings",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"

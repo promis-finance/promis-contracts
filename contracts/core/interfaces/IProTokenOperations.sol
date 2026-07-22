@@ -372,6 +372,7 @@ interface IProTokenOperations {
     error YAssetPaused();
     error InsufficientAmountOut(uint256 amountOut, uint256 minAmountOut);
     error InvalidOraclePrice(address oracle);
+    error OraclePriceBelowMin(uint256 price);
     error YAssetPriceExceedsThreshold(uint256 assetPrice, uint256 upperLimit);
     error OraclePriceDeviation(uint256 deviation, uint256 maxAllowed);
     error InsufficientUnmintAmount(uint256 amount, uint256 minimumRequired);
@@ -384,4 +385,5 @@ interface IProTokenOperations {
     error BelowMinDeposit(uint256 oldMin, uint256 newMin);
     error BelowMinWithdraw(uint256 oldMin, uint256 newMin);
     error InvalidMinBases();
+    error ZeroUsdCap();
 }

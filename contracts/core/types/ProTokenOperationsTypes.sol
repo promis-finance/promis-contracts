@@ -24,9 +24,13 @@ library ProTokenOperationsTypes {
     }
 
     /**
-     * @notice Multi-oracle aggregation parameters.
-     * @param maxPriceDeviation Max allowed deviation between oracle prices, in basis points.
-     */
+    * @notice Multi-oracle aggregation parameters.
+    * @param maxPriceDeviation Max allowed spread between the highest and lowest
+    *        oracle price, in basis points relative to the lowest price
+    *        (maxPrice/minPrice <= 1 + maxPriceDeviation/10000). Each source is
+    *        additionally checked against the median with the same threshold.
+    *        Zero disables the check.
+    */
     struct OracleAggregationSettings {
         uint256 maxPriceDeviation;
     }

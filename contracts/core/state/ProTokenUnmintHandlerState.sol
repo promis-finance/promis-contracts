@@ -42,6 +42,9 @@ abstract contract ProTokenUnmintHandlerState {
     mapping(address => mapping(uint256 => mapping(address => uint256)))
         internal unmintRequestIdForReceiverInBatch;
 
+    /// @notice yAsset owed to queued, not-yet-processed unmint requests.
+    mapping(address => uint256) internal unpaidQueuedLiability;
+
     /// @notice Reserved storage for future upgrades.
-    uint256[41] internal __gap;
+    uint256[40] internal __gap;
 }

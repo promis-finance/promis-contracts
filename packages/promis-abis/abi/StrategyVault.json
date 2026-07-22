@@ -18,6 +18,32 @@
   {
     "inputs": [
       {
+        "internalType": "uint256",
+        "name": "depositInput",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "depositRequired",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "withdrawInput",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "withdrawRequired",
+        "type": "uint256"
+      }
+    ],
+    "name": "CoverExceedsDeficit",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
         "internalType": "address",
         "name": "implementation",
         "type": "address"
@@ -100,6 +126,22 @@
     "type": "error"
   },
   {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "livePrice",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "lastPrice",
+        "type": "uint256"
+      }
+    ],
+    "name": "NotAMarkdown",
+    "type": "error"
+  },
+  {
     "inputs": [],
     "name": "NotAdmin",
     "type": "error"
@@ -138,12 +180,12 @@
     "inputs": [
       {
         "internalType": "uint256",
-        "name": "input",
+        "name": "requested",
         "type": "uint256"
       },
       {
         "internalType": "uint256",
-        "name": "withdraw",
+        "name": "available",
         "type": "uint256"
       }
     ],
@@ -278,6 +320,56 @@
       {
         "indexed": true,
         "internalType": "address",
+        "name": "caller",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "toDepositPool",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "toWithdrawPool",
+        "type": "uint256"
+      }
+    ],
+    "name": "Covered",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "from",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "worthBase",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "totalEarmarked",
+        "type": "uint256"
+      }
+    ],
+    "name": "Earmarked",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
         "name": "from",
         "type": "address"
       },
@@ -333,6 +425,37 @@
       }
     ],
     "name": "Initialized",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "oldPrice",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "newPrice",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "depositShortfall",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "withdrawShortfall",
+        "type": "uint256"
+      }
+    ],
+    "name": "PriceMarkedDown",
     "type": "event"
   },
   {
@@ -698,6 +821,24 @@
     "type": "function"
   },
   {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "toDepositPool",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "toWithdrawPool",
+        "type": "uint256"
+      }
+    ],
+    "name": "cover",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
     "inputs": [],
     "name": "depositBase",
     "outputs": [
@@ -712,7 +853,46 @@
   },
   {
     "inputs": [],
+    "name": "depositDeficit",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "depositProUSD",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "worthBase",
+        "type": "uint256"
+      }
+    ],
+    "name": "earmark",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "earmarkedWithdrawBase",
     "outputs": [
       {
         "internalType": "uint256",
@@ -783,6 +963,24 @@
       }
     ],
     "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "markdownPrice",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "depositShortfall",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "withdrawShortfall",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
     "type": "function"
   },
   {
@@ -978,6 +1176,19 @@
   {
     "inputs": [],
     "name": "withdrawBase",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "withdrawDeficit",
     "outputs": [
       {
         "internalType": "uint256",

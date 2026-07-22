@@ -90,7 +90,7 @@ describe("ProTokenSettings", function () {
             await expect(
                 upgrades.deployProxy(
                     Factory,
-                    [ZERO_ADDRESS, accounts.operator.address],
+                    [ZERO_ADDRESS, accounts.operator.address, accounts.priceOperator.address],
                     { kind: "uups" }
                 )
             ).to.be.revertedWithCustomError(Factory, ERRORS.ZeroAddress);
@@ -103,7 +103,7 @@ describe("ProTokenSettings", function () {
             await expect(
                 upgrades.deployProxy(
                     Factory,
-                    [accounts.admin.address, ZERO_ADDRESS],
+                    [accounts.admin.address, ZERO_ADDRESS, accounts.priceOperator.address],
                     { kind: "uups" }
                 )
             ).to.be.revertedWithCustomError(Factory, ERRORS.ZeroAddress);
@@ -114,7 +114,7 @@ describe("ProTokenSettings", function () {
             await expect(
                 upgrades.deployProxy(
                     Factory,
-                    [ZERO_ADDRESS, ZERO_ADDRESS],
+                    [ZERO_ADDRESS, ZERO_ADDRESS, ZERO_ADDRESS],
                     { kind: "uups" }
                 )
             ).to.be.revertedWithCustomError(Factory, ERRORS.ZeroAddress);
@@ -127,7 +127,8 @@ describe("ProTokenSettings", function () {
             await expect(
                 proTokenSettings.initialize(
                     accounts.admin.address,
-                    accounts.operator.address
+                    accounts.operator.address,
+                    accounts.priceOperator.address
                 )
             ).to.be.revertedWithCustomError(
                 proTokenSettings,
@@ -145,7 +146,7 @@ describe("ProTokenSettings", function () {
                 implAddress
             );
             await expect(
-                impl.initialize(ZERO_ADDRESS, ZERO_ADDRESS)
+                impl.initialize(ZERO_ADDRESS, ZERO_ADDRESS, ZERO_ADDRESS)
             ).to.be.revertedWithCustomError(impl, ERRORS.InvalidInitialization);
         });
     });
@@ -645,50 +646,6 @@ describe("ProTokenSettings", function () {
     });
 
     // =======================================================================
-    // setProTokenPriceSettings
-    // =======================================================================
-    describe("setProTokenPriceSettings()", function () {
-        it("admin can set price settings", async function () {
-            const { proTokenSettings, accounts } = await loadFixture(
-                proTokenSettingsFixture
-            );
-            const oracle = getRandomAddress();
-
-            await expect(
-                proTokenSettings
-                    .connect(accounts.admin)
-                    .setProTokenPriceSettings({ oraclePriceSource: oracle })
-            )
-                .to.emit(proTokenSettings, EVENTS.ProTokenPriceSettingsSet)
-                .withArgs(oracle);
-        });
-
-        it("allows oracle = zero address", async function () {
-            const { proTokenSettings, accounts } = await loadFixture(
-                proTokenSettingsFixture
-            );
-            await expect(
-                proTokenSettings
-                    .connect(accounts.admin)
-                    .setProTokenPriceSettings({ oraclePriceSource: ZERO_ADDRESS })
-            )
-                .to.emit(proTokenSettings, EVENTS.ProTokenPriceSettingsSet)
-                .withArgs(ZERO_ADDRESS);
-        });
-
-        it("reverts when called by non-admin", async function () {
-            const { proTokenSettings, accounts } = await loadFixture(
-                proTokenSettingsFixture
-            );
-            await expect(
-                proTokenSettings
-                    .connect(accounts.operator)
-                    .setProTokenPriceSettings({ oraclePriceSource: getRandomAddress() })
-            ).to.be.revertedWithCustomError(proTokenSettings, ERRORS.NotAdmin);
-        });
-    });
-
-    // =======================================================================
     // setYAsset
     // =======================================================================
     describe("setYAsset()", function () {
@@ -856,6 +813,50 @@ describe("ProTokenSettings", function () {
                     .setYAsset(getRandomAddress(), settings)
             ).to.be.revertedWithCustomError(proTokenSettings, ERRORS.NotAdmin);
         });
+
+        it("reverts ZeroUsdCap when usdCap is zero (legacy config no longer valid)", async function () {
+        const { proTokenSettings, accounts, proTokenSettingsAddress } =
+            await loadFixture(proTokenSettingsFixture);
+
+        const yAsset = await deployMintableERC20("Test", "T", DECIMALS_18);
+        const yAssetAddress = await yAsset.getAddress();
+        const yOpsHandler = await deployYAssetOperationsHandler(
+            proTokenSettingsAddress,
+            yAssetAddress
+        );
+
+        const base = createDefaultYAssetSettings(await yOpsHandler.getAddress());
+        const settings: YAssetSettings = {
+            ...base,
+            priceSettings: { ...base.priceSettings, usdCap: 0n },
+        };
+
+        await expect(
+            proTokenSettings.connect(accounts.admin).setYAsset(yAssetAddress, settings)
+        ).to.be.revertedWithCustomError(proTokenSettings, ERRORS.ZeroUsdCap);
+    });
+
+    it("stores and returns the configured usdCap", async function () {
+        const { proTokenSettings, accounts, proTokenSettingsAddress } =
+            await loadFixture(proTokenSettingsFixture);
+
+        const yAsset = await deployMintableERC20("Test", "T", DECIMALS_18);
+        const yAssetAddress = await yAsset.getAddress();
+        const yOpsHandler = await deployYAssetOperationsHandler(
+            proTokenSettingsAddress,
+            yAssetAddress
+        );
+
+        const base = createDefaultYAssetSettings(await yOpsHandler.getAddress());
+        const settings: YAssetSettings = {
+            ...base,
+            priceSettings: { ...base.priceSettings, usdCap: ONE_USD * 2n },
+        };
+        await proTokenSettings.connect(accounts.admin).setYAsset(yAssetAddress, settings);
+
+        const resp = await proTokenSettings.getYAssets([yAssetAddress]);
+        expect(resp.yAssets[0].settings.priceSettings.usdCap).to.equal(ONE_USD * 2n);
+    });
     });
 
     // =======================================================================
@@ -1088,11 +1089,15 @@ describe("ProTokenSettings", function () {
             const yAsset = await deployMintableERC20("Test", "T", DECIMALS_18);
             const yAssetAddress = await yAsset.getAddress();
 
-            const fakeHandler = await deployMintableERC20("Fake", "F", DECIMALS_18);
-            const settings = createDefaultYAssetSettings(await fakeHandler.getAddress());
+            const handler = await deployYAssetOperationsHandler(await proTokenSettings.getAddress(), yAssetAddress);       
+            const settings = createDefaultYAssetSettings(await handler.getAddress());
             await proTokenSettings
                 .connect(accounts.admin)
                 .setYAsset(yAssetAddress, settings);
+            
+            const venue = await (await ethers.getContractFactory("MockYieldProtocolHandler")).deploy(yAssetAddress);                       // answers identity correctly
+            await handler.connect(accounts.admin).setYProtocolHandlers([await venue.getAddress()], [10000n]);  // passes the venue identity check
+            await venue.setBroken(true);
 
             await expect(
                 proTokenSettings.connect(accounts.admin).removeYAsset(yAssetAddress)

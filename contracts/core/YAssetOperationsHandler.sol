@@ -93,7 +93,9 @@ contract YAssetOperationsHandler is
             IProTokenSettings(proTokenSettings)
                 .getProTokenInfo()
                 .proTokenOperations
-        ) {} else if (
+        ) {
+            if (IERC20(yAsset).balanceOf(address(this)) < _amount) revert AssetNotReceived();
+        } else if (
             msg.sender ==
             IProTokenSettings(proTokenSettings).getExternalBusiness() ||
             msg.sender == IProTokenSettings(proTokenSettings).getOperator() ||
@@ -241,17 +243,27 @@ contract YAssetOperationsHandler is
         // 2. Withdraw the shortfall from yield handlers in order.
         for (uint256 i = 0; i < protocolHandlers.length && remaining > 0; i++) {
             address handlerAddr = protocolHandlers[i].handlerContract;
-            if (handlerAddr == address(0)) continue;
-            uint256 handlerBalance =
-                IYieldProtocolHandler(handlerAddr).getBalance();
+            if (handlerAddr == address(0) || handlerAddr.code.length == 0) continue;
+
+            uint256 handlerBalance;
+            try IYieldProtocolHandler(handlerAddr).getBalance() returns (uint256 bal) {
+                handlerBalance = bal;
+            } catch {
+                continue; // unreadable venue: skip
+            }
             if (handlerBalance == 0) continue;
+        
             uint256 toPull = handlerBalance >= remaining
                 ? remaining
                 : handlerBalance;
             // Handler withdraws the asset to THIS contract (msg.sender of withdraw).
-            uint256 got =
-                IYieldProtocolHandler(handlerAddr).withdrawYieldAsset(toPull);
-            remaining -= got;
+            try IYieldProtocolHandler(handlerAddr).withdrawYieldAsset(toPull) returns (uint256 got) {
+                // Trust no handler to over-report: never credit more than asked.
+                remaining -= got > toPull ? toPull : got;
+            } catch {
+                // crunched venue (e.g. Aave pool at high utilization): skip,
+                // the next handler may cover the shortfall.
+            }
         }
         if (remaining > 0) revert InsufficientBalance();
         
@@ -326,6 +338,10 @@ contract YAssetOperationsHandler is
             address handlerAddr = _handlers[i];
             uint256 allocation = _allocations[i];
 
+            if (IYieldProtocolHandler(handlerAddr).getYieldAsset() != yAsset)
+                revert HandlerAssetMismatch(handlerAddr);
+
+            if (isProtocolHandler[handlerAddr]) revert DuplicateHandler();
             isProtocolHandler[handlerAddr] = true;
 
             protocolHandlers.push(

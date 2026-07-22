@@ -6,9 +6,6 @@ import {
     deployProTokenOperations,
     deployProTokenUnmintHandler,
     deployYAssetOperationsHandler,
-    deployOracleAlgebraAdaptor,
-    deployOracleRedStoneAdaptor,
-    deployOracleRedStonePushAdaptor,
     deployAaveV3YieldHandler,
     deployMorphoYieldHandler,
     deployMintableERC20,
@@ -25,9 +22,6 @@ import {
     ProTokenOperations,
     ProTokenUnmintHandler,
     YAssetOperationsHandler,
-    OracleAlgebraAdaptor,
-    OracleRedStoneAdaptor,
-    OracleRedStonePushAdaptor,
     AaveV3YieldHandler,
     MorphoYieldHandler,
     MintableERC20,
@@ -67,7 +61,7 @@ export interface ProTokenSettingsFixture {
  */
 export async function proTokenSettingsFixture() {
     const accounts = await getTestAccounts();
-    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator);
+    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator);
     const proTokenSettingsAddress = await proTokenSettings.getAddress();
 
     return {
@@ -94,7 +88,7 @@ export interface ProTokenFixture {
  */
 export async function proTokenFixture(): Promise<ProTokenFixture> {
     const accounts = await getTestAccounts();
-    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator);
+    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator);
     const proTokenSettingsAddress = await proTokenSettings.getAddress();
 
     // Use minter account as the minter for testing
@@ -153,7 +147,7 @@ export async function fullProtocolFixture(): Promise<FullProtocolFixture> {
     const accounts = await getTestAccounts();
 
     // Deploy ProTokenSettings
-    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator);
+    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator);
     const proTokenSettingsAddress = await proTokenSettings.getAddress();
 
     // Deploy ProTokenOperations first (needed as minter)
@@ -220,85 +214,6 @@ export async function fullProtocolFixture(): Promise<FullProtocolFixture> {
 }
 
 // ============================================
-// Oracle Fixtures
-// ============================================
-
-export interface OracleAlgebraFixture {
-    accounts: TestAccounts;
-    proTokenSettings: ProTokenSettings;
-    proTokenSettingsAddress: string;
-    oracleAlgebraAdaptor: OracleAlgebraAdaptor;
-    oracleAlgebraAdaptorAddress: string;
-}
-
-export async function oracleAlgebraFixture(): Promise<OracleAlgebraFixture> {
-    const accounts = await getTestAccounts();
-    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator);
-    const proTokenSettingsAddress = await proTokenSettings.getAddress();
-
-    const oracleAlgebraAdaptor = await deployOracleAlgebraAdaptor(proTokenSettingsAddress);
-    const oracleAlgebraAdaptorAddress = await oracleAlgebraAdaptor.getAddress();
-
-    return {
-        accounts,
-        proTokenSettings,
-        proTokenSettingsAddress,
-        oracleAlgebraAdaptor,
-        oracleAlgebraAdaptorAddress,
-    };
-}
-
-export interface OracleRedStoneFixture {
-    accounts: TestAccounts;
-    proTokenSettings: ProTokenSettings;
-    proTokenSettingsAddress: string;
-    oracleRedStoneAdaptor: OracleRedStoneAdaptor;
-    oracleRedStoneAdaptorAddress: string;
-}
-
-export async function oracleRedStoneFixture(): Promise<OracleRedStoneFixture> {
-    const accounts = await getTestAccounts();
-    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator);
-    const proTokenSettingsAddress = await proTokenSettings.getAddress();
-
-    const oracleRedStoneAdaptor = await deployOracleRedStoneAdaptor(proTokenSettingsAddress);
-    const oracleRedStoneAdaptorAddress = await oracleRedStoneAdaptor.getAddress();
-
-    return {
-        accounts,
-        proTokenSettings,
-        proTokenSettingsAddress,
-        oracleRedStoneAdaptor,
-        oracleRedStoneAdaptorAddress,
-    };
-}
-
-export interface OracleRedStonePushFixture {
-    accounts: TestAccounts;
-    proTokenSettings: ProTokenSettings;
-    proTokenSettingsAddress: string;
-    oracleRedStonePushAdaptor: OracleRedStonePushAdaptor;
-    oracleRedStonePushAdaptorAddress: string;
-}
-
-export async function oracleRedStonePushFixture(): Promise<OracleRedStonePushFixture> {
-    const accounts = await getTestAccounts();
-    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator);
-    const proTokenSettingsAddress = await proTokenSettings.getAddress();
-
-    const oracleRedStonePushAdaptor = await deployOracleRedStonePushAdaptor(proTokenSettingsAddress);
-    const oracleRedStonePushAdaptorAddress = await oracleRedStonePushAdaptor.getAddress();
-
-    return {
-        accounts,
-        proTokenSettings,
-        proTokenSettingsAddress,
-        oracleRedStonePushAdaptor,
-        oracleRedStonePushAdaptorAddress,
-    };
-}
-
-// ============================================
 // Yield Handler Fixtures
 // ============================================
 
@@ -320,7 +235,7 @@ export interface AaveV3YieldHandlerFixture {
 
 export async function aaveV3YieldHandlerFixture(): Promise<AaveV3YieldHandlerFixture> {
     const accounts = await getTestAccounts();
-    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator);
+    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator);
     const proTokenSettingsAddress = await proTokenSettings.getAddress();
 
     // Deploy yAsset
@@ -488,27 +403,6 @@ export function loadProTokenFixture() {
  */
 export function loadFullProtocolFixture() {
     return loadFixture(fullProtocolFixture);
-}
-
-/**
- * Load the Oracle Algebra fixture
- */
-export function loadOracleAlgebraFixture() {
-    return loadFixture(oracleAlgebraFixture);
-}
-
-/**
- * Load the Oracle RedStone fixture
- */
-export function loadOracleRedStoneFixture() {
-    return loadFixture(oracleRedStoneFixture);
-}
-
-/**
- * Load the Oracle RedStone Push fixture
- */
-export function loadOracleRedStonePushFixture() {
-    return loadFixture(oracleRedStonePushFixture);
 }
 
 /**

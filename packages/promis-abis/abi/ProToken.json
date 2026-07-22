@@ -214,11 +214,6 @@
   },
   {
     "inputs": [],
-    "name": "NotAdminOrOperator",
-    "type": "error"
-  },
-  {
-    "inputs": [],
     "name": "NotInitializing",
     "type": "error"
   },
@@ -229,7 +224,17 @@
   },
   {
     "inputs": [],
-    "name": "NotOperator",
+    "name": "NotPriceOperator",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "PriceNotIncreasing",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "PriceStepSizeExceeded",
     "type": "error"
   },
   {
@@ -384,6 +389,25 @@
     "anonymous": false,
     "inputs": [
       {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "prevSize",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "size",
+        "type": "uint256"
+      }
+    ],
+    "name": "StepSizeChanged",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
         "indexed": true,
         "internalType": "address",
         "name": "from",
@@ -422,6 +446,25 @@
       }
     ],
     "name": "USDPriceSet",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "prevPrice",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "price",
+        "type": "uint256"
+      }
+    ],
+    "name": "USDPriceUpdated",
     "type": "event"
   },
   {
@@ -833,6 +876,19 @@
     "inputs": [
       {
         "internalType": "uint256",
+        "name": "_stepSize",
+        "type": "uint256"
+      }
+    ],
+    "name": "setStepSize",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
         "name": "_price",
         "type": "uint256"
       }
@@ -918,6 +974,19 @@
         "type": "bool"
       }
     ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "_price",
+        "type": "uint256"
+      }
+    ],
+    "name": "updateUSDPrice",
+    "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
   },

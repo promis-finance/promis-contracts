@@ -19,6 +19,7 @@ contract MockYieldProtocolHandler is IYieldProtocolHandler {
     bool public shouldRevertWithdraw;
     uint256 public withdrawReturnAmount;
     bool public useActualBalance;
+    bool public broken;
 
     constructor(address _yieldAsset) {
         yieldAsset = _yieldAsset;
@@ -129,6 +130,7 @@ contract MockYieldProtocolHandler is IYieldProtocolHandler {
      * @inheritdoc IYieldProtocolHandler
      */
     function getBalance() external view override returns (uint256) {
+        if (broken) revert("venue down");
         if (useActualBalance) {
             return IERC20(yieldAsset).balanceOf(address(this));
         }
@@ -158,4 +160,6 @@ contract MockYieldProtocolHandler is IYieldProtocolHandler {
     function simulateYield(uint256 yieldAmount) external {
         balance += yieldAmount;
     }
+
+    function setBroken(bool b) external { broken = b; }
 }

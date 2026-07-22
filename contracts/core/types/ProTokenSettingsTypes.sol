@@ -7,14 +7,6 @@ pragma solidity 0.8.29;
  */
 library ProTokenSettingsTypes {
     /**
-     * @notice proUSD price source.
-     * @param oraclePriceSource Oracle adaptor; zero means read proUSD's own getUSDPrice().
-     */
-    struct ProTokenPriceSettings {
-        address oraclePriceSource;
-    }
-
-    /**
      * @notice Price configuration for a yAsset.
      * @param staticPriceSource Fixed USD price (18 dec); zero means use oracles.
      * @param usdCap Optional USD cap (18 dec); zero uses the 1:1 cap logic.
@@ -70,12 +62,10 @@ library ProTokenSettingsTypes {
      * @param proToken proUSD token contract.
      * @param proTokenOperations ProTokenOperations contract.
      * @param proTokenUnmintHandler ProTokenUnmintHandler contract.
-     * @param priceSettings proUSD price configuration.
      */
     struct GetProTokenInfoResponse {
         address proToken;
         address proTokenOperations;
         address proTokenUnmintHandler;
-        ProTokenPriceSettings priceSettings;
     }
 }

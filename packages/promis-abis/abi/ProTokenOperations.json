@@ -188,6 +188,17 @@
     "inputs": [
       {
         "internalType": "uint256",
+        "name": "price",
+        "type": "uint256"
+      }
+    ],
+    "name": "OraclePriceBelowMin",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
         "name": "deviation",
         "type": "uint256"
       },
@@ -297,6 +308,11 @@
   {
     "inputs": [],
     "name": "ZeroAmount",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "ZeroUsdCap",
     "type": "error"
   },
   {

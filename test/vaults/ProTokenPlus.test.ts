@@ -208,7 +208,7 @@ async function proTokenPlusFixture(): Promise<ProTokenPlusFixture> {
     };
 
     // --- Settings ---
-    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator);
+    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator);
     const proTokenSettingsAddress = await proTokenSettings.getAddress();
 
     // --- ProTokenOperations (must be proUSD's minter so strategicMint can mint) ---
@@ -649,7 +649,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
 
         it("reverts initialize with zero proUSD", async function () {
             const accounts = await getTestAccounts();
-            const settings = await deployProTokenSettings(accounts.admin, accounts.operator);
+            const settings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator);
             const ProTokenPlusFactory = await ethers.getContractFactory("ProTokenPlus");
             await expect(
                 upgrades.deployProxy(
@@ -662,7 +662,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
 
         it("reverts initialize when tier arrays have mismatched lengths", async function () {
             const accounts = await getTestAccounts();
-            const settings = await deployProTokenSettings(accounts.admin, accounts.operator);
+            const settings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator);
             const proUSD = await deployProToken(
                 PROTOKEN_NAME,
                 PROTOKEN_SYMBOL,
@@ -687,7 +687,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
 
         it("reverts initialize when a non-floor tier has zero duration", async function () {
             const accounts = await getTestAccounts();
-            const settings = await deployProTokenSettings(accounts.admin, accounts.operator);
+            const settings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator);
             const proUSD = await deployProToken(
                 PROTOKEN_NAME,
                 PROTOKEN_SYMBOL,
@@ -1151,7 +1151,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
         // Bump proUSD's USD price to simulate appreciation. ProToken.setUSDPrice
         // is operator-gated (per the price model); the operator drives it here.
         async function appreciate(ctx: ProTokenPlusFixture, newPrice: bigint) {
-            await ctx.proUSD.connect(ctx.accounts.operator).setUSDPrice(newPrice);
+            await ctx.proUSD.connect(ctx.accounts.admin).setUSDPrice(newPrice);
         }
 
         it("price appreciation banks freed proUSD into growthProUSD on the next interaction", async function () {
@@ -1831,6 +1831,326 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                 (await ctx.strategyVault.growthProUSD()) +
                 (await ctx.strategyVault.withdrawProUSD());
             expect(held).to.be.gte(obligations);
+        });
+    });
+
+    // =======================================================================
+    // Earmark protection (withdraw-reserve race)
+    //
+    // Finding: nothing reserved withdraw-pool capacity for in-flight
+    // unbondings, so a permissionless relock (regive) or an operator rotate
+    // could drain the reserve first-come and block a matured completeWithdraw
+    // with WithdrawReserveUnderfunded.
+    //
+    // Fix under test: _executeInitiateWithdraw calls vault.earmark(amount)
+    // (BASE-denominated → price-invariant); take() releases the same amount
+    // when the exit is paid; regive/rotate are gated on the SURPLUS
+    // (withdrawBase − earmarkedWithdrawBase), not the raw aggregate, with the
+    // markdown-window belt-and-braces token check retained.
+    //
+    // Invariant: earmarkedWithdrawBase == Σ active unbondingRequests[i].amount
+    // (take() is the ONLY release path; there is no cancel/expiry).
+    // =======================================================================
+    describe("Earmark protection (withdraw-reserve race)", function () {
+        // Mirror of the on-chain invariant's right-hand side.
+        async function sumActiveUnbondings(
+            ctx: ProTokenPlusFixture,
+            users: HardhatEthersSigner[],
+        ): Promise<bigint> {
+            let sum = 0n;
+            for (const u of users) {
+                const reqs = await ctx.proTokenPlus.getUnbondingRequests(u.address, 0, 100);
+                for (const r of reqs) {
+                    if (r.isActive) sum += BigInt(r.amount);
+                }
+            }
+            return sum;
+        }
+
+        async function expectEarmarkInvariant(
+            ctx: ProTokenPlusFixture,
+            users: HardhatEthersSigner[],
+        ) {
+            expect(await ctx.strategyVault.earmarkedWithdrawBase()).to.equal(
+                await sumActiveUnbondings(ctx, users),
+            );
+        }
+
+        it("WIRING: initiate-withdraw earmarks exactly the unbonding amount and emits Earmarked", async function () {
+            // This test is the tripwire for the silent-no-op failure mode: the
+            // earmark call is a void external call, so an unset vault or a
+            // dropped call site would fail SILENTLY everywhere except here.
+            const ctx = await loadFixture(proTokenPlusFixture);
+            const user = ctx.accounts.user1;
+
+            const positionId = await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
+            const totalBase = await positionTotalBase(ctx, positionId);
+            await time.increase(Number(QUARTERLY_DURATION) + 1);
+
+            expect(await ctx.strategyVault.earmarkedWithdrawBase()).to.equal(0n);
+
+            // withdrawFor finalizes the request → _executeInitiateWithdraw →
+            // vault.earmark(request.amount). Caller seen by the vault is the
+            // ProTokenPlus proxy (delegatecall context).
+            const createTx = await ctx.proTokenPlus.connect(user).createWithdrawRequest([positionId], []);
+            const requestId = (await createTx.wait())!.logs
+                .map((l) => { try { return ctx.proTokenPlus.interface.parseLog(l as never); } catch { return null; } })
+                .find((e) => e?.name === "WithdrawRequestCreated")!.args.requestID as bigint;
+            const proof = await signWithdrawProof(ctx.accounts.authority, ctx.proTokenPlusAddress, {
+                requestId,
+                positionIDs: [positionId],
+                user: user.address,
+                unlockedPositionsToMerge: [],
+                proofKind: VaultProofKind.PROOF_OF_APPROVE,
+            });
+
+            await expect(
+                ctx.proTokenPlus.connect(user).finalizeWithdrawRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, proof),
+            )
+                .to.emit(ctx.strategyVault, "Earmarked")
+                .withArgs(ctx.proTokenPlusAddress, totalBase, totalBase);
+
+            expect(await ctx.strategyVault.earmarkedWithdrawBase()).to.equal(totalBase);
+            await expectEarmarkInvariant(ctx, [user]);
+        });
+
+        it("take() releases the earmark when the exit is paid", async function () {
+            const ctx = await loadFixture(proTokenPlusFixture);
+            const user = ctx.accounts.user1;
+
+            const positionId = await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
+            const totalBase = await positionTotalBase(ctx, positionId);
+
+            // Fund the reserve generously so completion is not funding-gated.
+            await strategistBorrow(ctx, await ctx.strategyVault.depositBase());
+            const repayUSDC = 2000n * 10n ** 6n;
+            await ctx.yAsset.mint(ctx.accounts.strategist.address, repayUSDC);
+            await strategistRepay(ctx, repayUSDC);
+
+            await time.increase(Number(QUARTERLY_DURATION) + 1);
+            const unbondingIndex = await withdrawFor(ctx, user, [positionId], []);
+            expect(await ctx.strategyVault.earmarkedWithdrawBase()).to.equal(totalBase);
+
+            await time.increase(Number(DEFAULT_UNBONDING_PERIOD) + 1);
+            await ctx.proTokenPlus.connect(user).completeWithdraw([unbondingIndex], []);
+
+            // Obligation settled → earmark fully released.
+            expect(await ctx.strategyVault.earmarkedWithdrawBase()).to.equal(0n);
+            await expectEarmarkInvariant(ctx, [user]);
+        });
+
+        it("THE RACE: a relock can no longer drain reserve owed to a matured exit (defers async; exit succeeds)", async function () {
+            const ctx = await loadFixture(proTokenPlusFixture);
+            const alice = ctx.accounts.user1;
+            const bob = ctx.accounts.user2;
+
+            // Both hold quarterly positions; strategist borrows everything, then
+            // repays 110 — enough for ALICE's exit (~101.5 incl. rewards) but not
+            // for alice's exit AND bob's 100-relock.
+            const alicePos = await depositFor(ctx, alice, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
+            const bobPos = await depositFor(ctx, bob, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
+            const aliceTotal = await positionTotalBase(ctx, alicePos);
+            await strategistBorrow(ctx, await ctx.strategyVault.depositBase());
+            const repayUSDC = 110n * 10n ** 6n;
+            await ctx.yAsset.mint(ctx.accounts.strategist.address, repayUSDC);
+            await strategistRepay(ctx, repayUSDC);
+
+            await time.increase(Number(QUARTERLY_DURATION) + 1);
+
+            // Alice initiates: her exit is now earmarked.
+            const unbondingIndex = await withdrawFor(ctx, alice, [alicePos], []);
+            expect(await ctx.strategyVault.earmarkedWithdrawBase()).to.equal(aliceTotal);
+
+            // RED-TEST PRECONDITION: the AGGREGATE reserve covers bob's relock
+            // (100 ≤ 110) — under pre-fix code, regive's aggregate-only check
+            // would have passed and DRAINED alice's funding here.
+            expect(await ctx.strategyVault.withdrawProUSD()).to.be.gte(HUNDRED_TOKENS);
+            expect(await ctx.strategyVault.withdrawBase()).to.be.gte(HUNDRED_TOKENS);
+
+            // GREEN: the surplus gate (110 − 101.5 ≈ 8.5 < 100) defers instead.
+            const reserveBefore = await ctx.strategyVault.withdrawProUSD();
+            await expect(
+                ctx.proTokenPlus.connect(bob).relock([bobPos], HUNDRED_TOKENS, ANNUAL_TIER_ID, []),
+            )
+                .to.emit(ctx.strategyVault, "RegivenAsync")
+                .withArgs(ctx.proTokenPlusAddress, HUNDRED_TOKENS, HUNDRED_TOKENS);
+
+            // Reserve untouched by the deferred regive; bob's relock still
+            // succeeded on the position side (async design).
+            expect(await ctx.strategyVault.withdrawProUSD()).to.equal(reserveBefore);
+            expect(
+                (await ctx.proTokenPlus.getUserPositions([bobPos]))[0].status,
+            ).to.equal(POSITION_STATUS_RELOCATED);
+
+            // Alice's matured exit is paid in full — the race is gone.
+            await time.increase(Number(DEFAULT_UNBONDING_PERIOD) + 1);
+            const balBefore = await ctx.proUSD.balanceOf(alice.address);
+            await ctx.proTokenPlus.connect(alice).completeWithdraw([unbondingIndex], []);
+            expect((await ctx.proUSD.balanceOf(alice.address)) - balBefore).to.equal(
+                await convertFromBase(ctx, aliceTotal),
+            );
+            await expectEarmarkInvariant(ctx, [alice, bob]);
+        });
+
+        it("rotate is bounded to the surplus: reverts RotateUnderfunded(requested, surplus), then succeeds for exactly the surplus", async function () {
+            const ctx = await loadFixture(proTokenPlusFixture);
+            const alice = ctx.accounts.user1;
+
+            const alicePos = await depositFor(ctx, alice, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
+            const aliceTotal = await positionTotalBase(ctx, alicePos);
+            await strategistBorrow(ctx, await ctx.strategyVault.depositBase());
+            const repayUSDC = 110n * 10n ** 6n;
+            await ctx.yAsset.mint(ctx.accounts.strategist.address, repayUSDC);
+            await strategistRepay(ctx, repayUSDC);
+
+            await time.increase(Number(QUARTERLY_DURATION) + 1);
+            const unbondingIndex = await withdrawFor(ctx, alice, [alicePos], []);
+
+            // Surplus = reserve base − earmark (all at $1, so bases are exact).
+            const surplus = (await ctx.strategyVault.withdrawBase()) - aliceTotal;
+            expect(surplus).to.be.gt(0n);
+
+            // Over-surplus rotate reverts, reporting the ACTIONABLE ceiling.
+            await expect(
+                ctx.strategyVault.connect(ctx.accounts.operator).rotate(HUNDRED_TOKENS / 2n),
+            )
+                .to.be.revertedWithCustomError(ctx.strategyVault, "RotateUnderfunded")
+                .withArgs(HUNDRED_TOKENS / 2n, surplus);
+
+            // Rotating exactly the surplus succeeds…
+            await expect(ctx.strategyVault.connect(ctx.accounts.operator).rotate(surplus))
+                .to.emit(ctx.strategyVault, "Rotated");
+
+            // …and leaves the reserve at exactly alice's earmark: her exit still clears.
+            expect(await ctx.strategyVault.withdrawBase()).to.equal(aliceTotal);
+            await time.increase(Number(DEFAULT_UNBONDING_PERIOD) + 1);
+            await expect(
+                ctx.proTokenPlus.connect(alice).completeWithdraw([unbondingIndex], []),
+            ).to.emit(ctx.proTokenPlus, "Withdrawn");
+            expect(await ctx.strategyVault.earmarkedWithdrawBase()).to.equal(0n);
+        });
+
+        it("PRE-REPAY CLAMP: earmark exceeding the reserve clamps surplus to zero — reshuffling waits for repay", async function () {
+            const ctx = await loadFixture(proTokenPlusFixture);
+            const alice = ctx.accounts.user1;
+            const bob = ctx.accounts.user2;
+
+            // Bigger positions so bob's tier-minimum relock (100) fits under the reserve.
+            const alicePos = await depositFor(ctx, alice, QUARTERLY_TIER_ID, HUNDRED_TOKENS * 3n);
+            const bobPos = await depositFor(ctx, bob, QUARTERLY_TIER_ID, HUNDRED_TOKENS * 3n);
+            const aliceTotal = await positionTotalBase(ctx, alicePos); // ≈ 304.4
+            await strategistBorrow(ctx, await ctx.strategyVault.depositBase());
+
+            await time.increase(Number(QUARTERLY_DURATION) + 1);
+            await withdrawFor(ctx, alice, [alicePos], []);
+
+            // Partial repay: reserve (150) is POSITIVE and would cover bob's
+            // 100-relock under the old aggregate check — but it's entirely
+            // inside alice's ~304 earmark, so surplus clamps to 0.
+            const repayUSDC = 150n * 10n ** 6n;
+            await ctx.yAsset.mint(ctx.accounts.strategist.address, repayUSDC);
+            await strategistRepay(ctx, repayUSDC);
+            expect(await ctx.strategyVault.withdrawBase()).to.be.gte(HUNDRED_TOKENS);
+            expect(await ctx.strategyVault.earmarkedWithdrawBase()).to.be.gt(
+                await ctx.strategyVault.withdrawBase(),
+            );
+
+            // Every regive defers…
+            await expect(
+                ctx.proTokenPlus.connect(bob).relock([bobPos], HUNDRED_TOKENS, ANNUAL_TIER_ID, []),
+            ).to.emit(ctx.strategyVault, "RegivenAsync");
+
+            // …and every rotate reverts with surplus 0.
+            await expect(
+                ctx.strategyVault.connect(ctx.accounts.operator).rotate(1n),
+            )
+                .to.be.revertedWithCustomError(ctx.strategyVault, "RotateUnderfunded")
+                .withArgs(1n, 0n);
+        });
+
+        it("earmark is BASE-denominated: survives appreciation and ratchet accrual unchanged; released on completion at the higher price", async function () {
+            // NOTE: the markdown half of this property (earmark unchanged across
+            // markdownPrice, exit payable after cover) lives on the slash branch —
+            // add it to SlashMarkdownCover.test.ts when the branches merge.
+            const ctx = await loadFixture(proTokenPlusFixture);
+            const alice = ctx.accounts.user1;
+            const P_110 = (USD_PRECISION * 110n) / 100n;
+
+            const alicePos = await depositFor(ctx, alice, QUARTERLY_TIER_ID, HUNDRED_TOKENS * 2n);
+            const aliceTotal = await positionTotalBase(ctx, alicePos);
+
+            // Borrow everything at $1, repay 300 USDC → 300 base in the reserve.
+            await strategistBorrow(ctx, await ctx.strategyVault.depositBase());
+            const repayUSDC = 300n * 10n ** 6n;
+            await ctx.yAsset.mint(ctx.accounts.strategist.address, repayUSDC);
+            await strategistRepay(ctx, repayUSDC);
+
+            await time.increase(Number(QUARTERLY_DURATION) + 1);
+            await withdrawFor(ctx, alice, [alicePos], []);
+            expect(await ctx.strategyVault.earmarkedWithdrawBase()).to.equal(aliceTotal);
+
+            // Price rises to $1.10 and the ratchet ACCRUES (banking freed tokens
+            // out of the withdraw pool into growth). The earmark is a BASE
+            // commitment: the accrual shrinks the token pool and the token cost
+            // of alice's exit in lockstep, and the earmark itself must not move.
+            await ctx.proUSD.connect(ctx.accounts.admin).setUSDPrice(P_110);
+            await ctx.strategyVault
+                .connect(ctx.accounts.admin)
+                .claimGrowth(ctx.accounts.admin.address, 0n); // triggers _accrueGrowth
+            expect(await ctx.strategyVault.earmarkedWithdrawBase()).to.equal(aliceTotal);
+
+            // Completion pays FEWER tokens at the higher price (aliceTotal/1.10)
+            // and releases the full BASE earmark — pinning that the release is
+            // worthBase-keyed, not token-keyed.
+            await time.increase(Number(DEFAULT_UNBONDING_PERIOD) + 1);
+            const balBefore = await ctx.proUSD.balanceOf(alice.address);
+            const unbondings = await ctx.proTokenPlus.getActiveUnbondingIndices(alice.address);
+            await ctx.proTokenPlus.connect(alice).completeWithdraw([unbondings[0]], []);
+
+            expect((await ctx.proUSD.balanceOf(alice.address)) - balBefore).to.equal(
+                (aliceTotal * USD_PRECISION) / P_110,
+            );
+            expect(await ctx.strategyVault.earmarkedWithdrawBase()).to.equal(0n);
+        });
+
+        it("INVARIANT: earmarkedWithdrawBase == Σ active unbondings through a mixed sequence", async function () {
+            const ctx = await loadFixture(proTokenPlusFixture);
+            const alice = ctx.accounts.user1;
+            const bob = ctx.accounts.user2;
+
+            const a1 = await depositFor(ctx, alice, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
+            const a2 = await depositFor(ctx, alice, QUARTERLY_TIER_ID, HUNDRED_TOKENS * 2n);
+            const b1 = await depositFor(ctx, bob, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
+
+            // Fund completions generously up front.
+            await strategistBorrow(ctx, await ctx.strategyVault.depositBase());
+            const repayUSDC = 2000n * 10n ** 6n;
+            await ctx.yAsset.mint(ctx.accounts.strategist.address, repayUSDC);
+            await strategistRepay(ctx, repayUSDC);
+
+            await time.increase(Number(QUARTERLY_DURATION) + 1);
+
+            const uA1 = await withdrawFor(ctx, alice, [a1], []);
+            await expectEarmarkInvariant(ctx, [alice, bob]);
+
+            await withdrawFor(ctx, bob, [b1], []);
+            await expectEarmarkInvariant(ctx, [alice, bob]);
+
+            await time.increase(Number(DEFAULT_UNBONDING_PERIOD) + 1);
+            await ctx.proTokenPlus.connect(alice).completeWithdraw([uA1], []);
+            await expectEarmarkInvariant(ctx, [alice, bob]);
+
+            // A late initiate after completions still tracks.
+            await withdrawFor(ctx, alice, [a2], []);
+            await expectEarmarkInvariant(ctx, [alice, bob]);
+
+            // Bob completes last; only alice's a2 unbonding remains earmarked.
+            const bobUnbondings = await ctx.proTokenPlus.getActiveUnbondingIndices(bob.address);
+            await ctx.proTokenPlus.connect(bob).completeWithdraw([bobUnbondings[0]], []);
+            await expectEarmarkInvariant(ctx, [alice, bob]);
+            expect(await ctx.strategyVault.earmarkedWithdrawBase()).to.equal(
+                await positionTotalBase(ctx, a2),
+            );
         });
     });
 

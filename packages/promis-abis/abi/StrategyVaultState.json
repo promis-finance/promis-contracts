@@ -14,7 +14,33 @@
   },
   {
     "inputs": [],
+    "name": "depositDeficit",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "depositProUSD",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "earmarkedWithdrawBase",
     "outputs": [
       {
         "internalType": "uint256",
@@ -106,6 +132,19 @@
   {
     "inputs": [],
     "name": "withdrawBase",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "withdrawDeficit",
     "outputs": [
       {
         "internalType": "uint256",

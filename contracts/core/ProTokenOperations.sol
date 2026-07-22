@@ -112,7 +112,6 @@ contract ProTokenOperations is
     struct MintSettings {
         ProTokenSettingsTypes.GetYAssetResponse yAssetSettings;
         address proToken;
-        ProTokenSettingsTypes.ProTokenPriceSettings proTokenPriceSettings;
     }
 
     function _verifyProof(
@@ -276,7 +275,6 @@ contract ProTokenOperations is
             UsdRepresentation memory rep = _getUsdRepresentationProToken(
                 proTokenInfo.proToken,
                 _amount,
-                proTokenInfo.priceSettings,
                 18
             );
             if (rep.assetAmountUSD < minW)
@@ -383,8 +381,7 @@ contract ProTokenOperations is
             _yAsset,
             _amount,
             yAssetSettings,
-            proTokenInfo.proToken,
-            proTokenInfo.priceSettings
+            proTokenInfo.proToken
         );
 
         // Check if there are any fees to pay for the unmint configured.
@@ -410,8 +407,17 @@ contract ProTokenOperations is
         IYAssetOperationsHandler yOps =
             IYAssetOperationsHandler(yAssetSettings.settings.yOperationsHandler);
 
-        if (yOps.previewPayOut(yAssetToReceiveAmount)) {
-            yOps.payOut(_recipient, yAssetToReceiveAmount);
+        uint256 backlog = IProTokenUnmintHandler(proTokenInfo.proTokenUnmintHandler).getUnpaidQueuedLiability(_yAsset);
+        bool paidInstant;
+        if (backlog == 0 && yOps.previewPayOut(yAssetToReceiveAmount)) {
+            try yOps.payOut(_recipient, yAssetToReceiveAmount) {
+                paidInstant = true;
+            } catch {
+                // fall through to the queue path below
+            }
+        }
+
+        if (paidInstant) {
             emit ProTokenUnmintInstant(
                 _sender,
                 _recipient,
@@ -423,6 +429,7 @@ contract ProTokenOperations is
             uint256 handlerRequestId = IProTokenUnmintHandler(
                 proTokenInfo.proTokenUnmintHandler
             ).createUnmintRequest(_recipient, _yAsset, yAssetToReceiveAmount);
+
             emit ProTokenUnmintQueued(
                 _sender,
                 _recipient,
@@ -532,8 +539,7 @@ contract ProTokenOperations is
             _yAsset,
             _proUSDAmount,
             yAssetSettings,
-            proTokenInfo.proToken,
-            proTokenInfo.priceSettings
+            proTokenInfo.proToken
         );
 
         // Burn the vault's proUSD. yAsset is paid out instantly if liquidity allows, 
@@ -544,8 +550,17 @@ contract ProTokenOperations is
         IYAssetOperationsHandler yOps =
             IYAssetOperationsHandler(yAssetSettings.settings.yOperationsHandler);
 
-        if (yOps.previewPayOut(yAssetReceived)) {
-            yOps.payOut(_destination, yAssetReceived);
+        uint256 backlog = IProTokenUnmintHandler(proTokenInfo.proTokenUnmintHandler).getUnpaidQueuedLiability(_yAsset);
+        bool paidInstant;
+        if (backlog == 0 && yOps.previewPayOut(yAssetReceived)) {
+            try yOps.payOut(_destination, yAssetReceived) {
+                paidInstant = true;
+            } catch {
+                // fall through to the queue path below
+            }
+        } 
+        
+        if (paidInstant) {
             emit StrategicUnmintInstant(
                 msg.sender,
                 _yAsset,
@@ -557,6 +572,7 @@ contract ProTokenOperations is
             uint256 handlerRequestId = IProTokenUnmintHandler(
                 proTokenInfo.proTokenUnmintHandler
             ).createUnmintRequest(_destination, _yAsset, yAssetReceived);
+
             emit StrategicUnmintQueued(
                 msg.sender,
                 _yAsset,
@@ -628,7 +644,6 @@ contract ProTokenOperations is
             memory proTokenUsdRepresentation = _getUsdRepresentationProToken(
                 settings.proToken,
                 1e18, // 1 pro token in 18 decimals
-                settings.proTokenPriceSettings,
                 18
             );
 
@@ -695,8 +710,7 @@ contract ProTokenOperations is
     ) internal view returns (MintSettings memory settings) {
         (
             settings.yAssetSettings,
-            settings.proToken,
-            settings.proTokenPriceSettings
+            settings.proToken
         ) = _getRelevantSettings(_yAsset);
     }
 
@@ -707,8 +721,7 @@ contract ProTokenOperations is
         view
         returns (
             ProTokenSettingsTypes.GetYAssetResponse memory yAssetSettings,
-            address proToken,
-            ProTokenSettingsTypes.ProTokenPriceSettings memory proTokenPriceSettings
+            address proToken
         )
     {
         yAssetSettings = _getYAssetSettings(_yAsset);
@@ -717,7 +730,6 @@ contract ProTokenOperations is
             IProTokenSettings(proTokenSettings).getProTokenInfo();
 
         proToken = proTokenInfo.proToken;
-        proTokenPriceSettings = proTokenInfo.priceSettings;
     }
 
     struct UsdRepresentation {
@@ -729,15 +741,13 @@ contract ProTokenOperations is
         address _yAsset,
         uint256 _proTokenAmount,
         ProTokenSettingsTypes.GetYAssetResponse memory yAssetSettings,
-        address proToken,
-        ProTokenSettingsTypes.ProTokenPriceSettings memory proTokenPriceSettings
+        address proToken
     ) internal view returns (uint256) {
         // Convert both proToken and yAsset to their current USD representations
         UsdRepresentation
             memory proTokenUsdRepresentation = _getUsdRepresentationProToken(
                 proToken,
                 _proTokenAmount,
-                proTokenPriceSettings,
                 18
             );
 
@@ -756,44 +766,21 @@ contract ProTokenOperations is
             revert InvalidOraclePrice(address(0));
         }
 
-        // Check if USD cap is configured
-        if (yAssetSettings.settings.priceSettings.usdCap > 0) {
-            // Apply USD cap logic
-            // Cap the yAsset USD value at the configured cap
-            uint256 cappedYAssetUSD = yAssetUsdRepresentation.assetUSD >
-                yAssetSettings.settings.priceSettings.usdCap
-                ? yAssetSettings.settings.priceSettings.usdCap
-                : yAssetUsdRepresentation.assetUSD;
+        // A configured usdCap is mandatory (see _calculateMintingAmount).
+        if (yAssetSettings.settings.priceSettings.usdCap == 0) revert ZeroUsdCap();
+            
+        // Floor the yAsset USD value at the configured cap: max(price, cap).
+        uint256 flooredYAssetUSD = yAssetUsdRepresentation.assetUSD <
+            yAssetSettings.settings.priceSettings.usdCap
+            ? yAssetSettings.settings.priceSettings.usdCap
+            : yAssetUsdRepresentation.assetUSD;
 
-            // Calculate amount using capped USD value
-            // yAssetAmount = (proTokenUSD * yAssetDecimals) / cappedYAssetUSD
-            return
-                (proTokenUsdRepresentation.assetAmountUSD *
-                    oneYAssetUnit) /
-                cappedYAssetUSD;
-        } else {
-            // No USD cap configured: use 1:1 cap logic
-            uint256 calculatedAmount = (proTokenUsdRepresentation
-                .assetAmountUSD *
+        // Calculate amount using capped USD value
+        // yAssetAmount = (proTokenUSD * yAssetDecimals) / flooredYAssetUSD
+        return
+            (proTokenUsdRepresentation.assetAmountUSD *
                 oneYAssetUnit) /
-                yAssetUsdRepresentation.assetAmountUSD;
-
-            uint256 decimalAdjustedAmount;
-            if (yAssetSettings.settings.decimals > 18) {
-                decimalAdjustedAmount =
-                    _proTokenAmount *
-                    (10 ** (yAssetSettings.settings.decimals - 18));
-            } else {
-                decimalAdjustedAmount =
-                    _proTokenAmount /
-                    (10 ** (18 - yAssetSettings.settings.decimals));
-            }
-
-            if (calculatedAmount > decimalAdjustedAmount) {
-                return decimalAdjustedAmount; // Cap at 1:1
-            }
-            return calculatedAmount;
-        }
+            flooredYAssetUSD;
     }
 
     function _calculateMintingAmount(
@@ -804,70 +791,34 @@ contract ProTokenOperations is
         uint8 yAssetDecimals
     ) internal pure returns (uint256) {
 
-        // Check if USD cap is configured
-        if (yAssetPriceSettings.usdCap > 0) {
-            // Apply USD cap logic
-            // Cap the yAsset USD value at the configured cap
-            uint256 cappedYAssetUSD = yAssetUsdRep.assetUSD >
-                yAssetPriceSettings.usdCap
-                ? yAssetPriceSettings.usdCap
-                : yAssetUsdRep.assetUSD;
+        // A configured usdCap is mandatory: it clamps the yAsset's USD value on the
+        // mint side (credit at most min(price, cap) per unit).
+        if (yAssetPriceSettings.usdCap == 0) revert ZeroUsdCap();
 
-            // Calculate amount using capped USD value
-            uint256 cappedYAssetAmountUSD = (yAssetAmount *
-                cappedYAssetUSD) / (10 ** yAssetDecimals);
-            return
-                (cappedYAssetAmountUSD * USD_PRECISION) /
-                proTokenUsdRep.assetAmountUSD;
-        } else {
-            // No USD cap configured: use legacy 1:1 cap logic
-            uint256 calculatedAmount = (yAssetUsdRep.assetAmountUSD *
-                USD_PRECISION) / proTokenUsdRep.assetAmountUSD;
+        // Cap the yAsset USD value at the configured cap: min(price, cap)
+        uint256 cappedYAssetUSD = yAssetUsdRep.assetUSD >
+            yAssetPriceSettings.usdCap
+            ? yAssetPriceSettings.usdCap
+            : yAssetUsdRep.assetUSD;
 
-            uint256 decimalAdjustedAmount;
-            if (yAssetDecimals > 18) {
-                decimalAdjustedAmount =
-                    yAssetAmount /
-                    (10 ** (yAssetDecimals - 18));
-            } else {
-                decimalAdjustedAmount =
-                    yAssetAmount *
-                    (10 ** (18 - yAssetDecimals));
-            }
-
-            if (calculatedAmount > decimalAdjustedAmount) {
-                return decimalAdjustedAmount; // Cap at 1:1
-            }
-            return calculatedAmount;
-        }
+        // Calculate amount using capped USD value
+        uint256 cappedYAssetAmountUSD = (yAssetAmount *
+            cappedYAssetUSD) / (10 ** yAssetDecimals);
+        return
+            (cappedYAssetAmountUSD * USD_PRECISION) /
+            proTokenUsdRep.assetAmountUSD;
     }
 
     function _getUsdRepresentationProToken(
         address _proToken,
         uint256 _amount,
-        ProTokenSettingsTypes.ProTokenPriceSettings memory _proTokenPriceSettings,
         uint8 _decimals
     ) internal view returns (UsdRepresentation memory usdRepresentation) {
-        // calculate the USD representation of the pro token using the configured price settings
-        if (_proTokenPriceSettings.oraclePriceSource == address(0)) {
-            // when no oracle configured, try get price directly from pro token contract
-            usdRepresentation.assetUSD = IProToken(_proToken).getUSDPrice();
-            usdRepresentation.assetAmountUSD =
-                (_amount * usdRepresentation.assetUSD) /
-                (10 ** _decimals); // come as 18 decimals
-        } else {
-            address[] memory oracles = new address[](1);
-            oracles[0] = _proTokenPriceSettings.oraclePriceSource;
-
-            usdRepresentation.assetUSD = _aggregateOraclePrices(
-                _proToken,
-                oracles
-            ); // come always as 18 decimals
-
-            usdRepresentation.assetAmountUSD =
-                (_amount * usdRepresentation.assetUSD) /
-                (10 ** _decimals); // come as 18 decimals
-        }
+        // get price directly from pro token contract
+        usdRepresentation.assetUSD = IProToken(_proToken).getUSDPrice();
+        usdRepresentation.assetAmountUSD =
+            (_amount * usdRepresentation.assetUSD) /
+            (10 ** _decimals); // come as 18 decimals
     }
 
     function _getUsdRepresentationYAsset(
@@ -908,10 +859,7 @@ contract ProTokenOperations is
 
             // Revert if any oracle fails - this is critical for security
             // All configured oracles must be operational for multi-oracle security to work
-            uint256 price = IOracleAdaptor(_oracles[i]).getOraclePriceForAsset(
-                _asset,
-                ""
-            );
+            uint256 price = IOracleAdaptor(_oracles[i]).getOraclePriceForAsset(_asset);
 
             if (price == 0) {
                 revert InvalidOraclePrice(_oracles[i]);
@@ -965,6 +913,13 @@ contract ProTokenOperations is
             return; // No deviation check configured
         }
 
+        uint256 minPrice = prices[0];
+        uint256 maxPrice = prices[length - 1];
+        uint256 spread = ((maxPrice - minPrice) * PERCENTAGE_PRECISION) / minPrice;
+        if (spread > settings.maxPriceDeviation) {
+            revert OraclePriceDeviation(spread, settings.maxPriceDeviation);
+        }
+        
         for (uint256 i = 0; i < length; i++) {
             uint256 deviation;
             if (prices[i] > medianPrice) {

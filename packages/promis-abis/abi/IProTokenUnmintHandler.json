@@ -696,6 +696,25 @@
         "internalType": "address",
         "name": "yAsset",
         "type": "address"
+      }
+    ],
+    "name": "getUnpaidQueuedLiability",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "liability",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "yAsset",
+        "type": "address"
       },
       {
         "internalType": "uint256",

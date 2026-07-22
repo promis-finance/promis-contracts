@@ -62,13 +62,11 @@ contract OracleChainlinkPushAdaptor is
         __UUPSUpgradeable_init();
         if (_proTokenSettings == address(0)) revert InvalidAddr();
         proTokenSettings = _proTokenSettings;
-        stalenessThreshold = 86400; // Default 24h = 86400 seconds as push models update less frequent stable coins
     }
 
     /// @inheritdoc IOracleAdaptor
     function getOraclePriceForAsset(
-        address asset,
-        bytes calldata
+        address asset
     ) external view override returns (uint256) {
         // Get push oracle configuration for asset
         address pushOracle = assetToPushOracleContract[asset];
@@ -84,15 +82,13 @@ contract OracleChainlinkPushAdaptor is
 
         if (price == 0) revert InvalidOraclePrice();
 
-        // Check staleness
-        uint256 timestampSeconds = updatedAt;
-
         // Guard against future timestamps (clock skew / buggy oracle)
-        if (timestampSeconds > block.timestamp) {
+        if (updatedAt > block.timestamp) {
             revert FutureOracleTimestamp();
         }
 
-        if (block.timestamp - timestampSeconds > stalenessThreshold) {
+        // Check staleness
+        if (block.timestamp - updatedAt > stalenessThreshold[asset]) {
             revert StaleOracleData();
         }
 
@@ -130,6 +126,7 @@ contract OracleChainlinkPushAdaptor is
 
             assetToPushOracleContract[assets[i]] = pushOracleContracts[i];
             assetToPriceDecimals[assets[i]] = priceDecimals[i];
+            stalenessThreshold[assets[i]] = 86400;
 
             emit AssetToPushOracleMappingUpdated(
                 assets[i],
@@ -141,11 +138,12 @@ contract OracleChainlinkPushAdaptor is
 
     /// @inheritdoc IOracleChainlinkPushAdaptor
     function setStalenessThreshold(
+        address asset,
         uint256 threshold
     ) external override onlyAdmin {
         if (threshold == 0) revert InvalidInputs();
-        stalenessThreshold = threshold;
-        emit StalenessThresholdUpdated(threshold);
+        stalenessThreshold[asset] = threshold;
+        emit StalenessThresholdUpdated(asset, threshold);
     }
 
     /// @inheritdoc IOracleChainlinkPushAdaptor

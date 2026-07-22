@@ -21,6 +21,16 @@
     "type": "error"
   },
   {
+    "inputs": [],
+    "name": "AssetNotReceived",
+    "type": "error"
+  },
+  {
+    "inputs": [],
+    "name": "DuplicateHandler",
+    "type": "error"
+  },
+  {
     "inputs": [
       {
         "internalType": "address",
@@ -39,6 +49,17 @@
   {
     "inputs": [],
     "name": "FailedCall",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "handler",
+        "type": "address"
+      }
+    ],
+    "name": "HandlerAssetMismatch",
     "type": "error"
   },
   {

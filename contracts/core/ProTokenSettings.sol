@@ -30,18 +30,22 @@ contract ProTokenSettings is
     /// @notice Maximum allowed price deviation for oracle aggregation (100% = 10000 basis points)
     uint256 public constant MAX_PRICE_DEVIATION_BPS = 10000;
 
+    /// @notice Maximum allowed unmint fee in WAD
+    uint256 public constant MAX_UNMINT_FEE = 1e17; // 10%
+
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }
 
-    function initialize(address _admin, address _operator) public initializer {
+    function initialize(address _admin, address _operator, address _priceOperator) public initializer {
         __Pausable_init();
         __UUPSUpgradeable_init();
-        if (_admin == address(0) || _operator == address(0))
+        if (_admin == address(0) || _operator == address(0) || _priceOperator == address(0))
             revert ZeroAddress();
         admin = _admin;
         operator = _operator;
+        priceOperator = _priceOperator;
     }
 
     modifier onlyAdmin() {
@@ -78,6 +82,14 @@ contract ProTokenSettings is
     }
 
     /// @inheritdoc IProTokenSettings
+    function setPriceOperator(address _priceOperator) external override onlyAdmin {
+        if (_priceOperator == address(0)) revert ZeroAddress();
+        address previous = priceOperator;
+        priceOperator = _priceOperator;
+        emit PriceOperatorSet(previous, _priceOperator);
+    }
+
+    /// @inheritdoc IProTokenSettings
     /// @notice Sets the external business address. Can be set to zero address to disable.
     function setExternalBusiness(
         address _externalBusiness
@@ -102,14 +114,6 @@ contract ProTokenSettings is
         address previousProToken = proToken;
         proToken = _proToken;
         emit ProTokenSet(previousProToken, _proToken);
-    }
-
-    /// @inheritdoc IProTokenSettings
-    function setProTokenPriceSettings(
-        ProTokenSettingsTypes.ProTokenPriceSettings memory _proTokenPriceSettings
-    ) external override onlyAdmin {
-        proTokenPriceSettings = _proTokenPriceSettings;
-        emit ProTokenPriceSettingsSet(_proTokenPriceSettings.oraclePriceSource);
     }
 
     /// @inheritdoc IProTokenSettings
@@ -154,6 +158,8 @@ contract ProTokenSettings is
     ) external override onlyAdmin {
         if (_yAsset == address(0)) revert ZeroAddress();
         if (_settings.yOperationsHandler == address(0)) revert ZeroAddress();
+        if (_settings.unmintFeePer > MAX_UNMINT_FEE) revert MaxFeeExceeded();
+        if (_settings.priceSettings.usdCap == 0) revert ZeroUsdCap();
         yAssets.add(_yAsset);
 
         // Cache storage pointer
@@ -164,7 +170,7 @@ contract ProTokenSettings is
             (_settings.priceSettings.staticPriceSource == 0 &&
                 _settings.priceSettings.oraclePriceSources.length == 0)
         ) revert ZeroSources();
-
+        
         // Assign other settings
         storageSettings.isEnabled = _settings.isEnabled;
         storageSettings.isPaused = _settings.isPaused;
@@ -185,6 +191,9 @@ contract ProTokenSettings is
                 _settings.priceSettings.oraclePriceSources[i]
             );
         }
+
+        if (IYAssetOperationsHandler(_settings.yOperationsHandler).getYAsset() != _yAsset)
+            revert HandlerAssetMismatch();
         
         storageSettings.priceSettings.usdCap = _settings
             .priceSettings
@@ -300,6 +309,11 @@ contract ProTokenSettings is
     }
 
     /// @inheritdoc IProTokenSettings
+    function getPriceOperator() external view override returns (address) {
+        return priceOperator;
+    }
+
+    /// @inheritdoc IProTokenSettings
     function getUnmintYAssets()
         external
         view
@@ -377,8 +391,7 @@ contract ProTokenSettings is
             ProTokenSettingsTypes.GetProTokenInfoResponse({
                 proToken: proToken,
                 proTokenOperations: proTokenOperations,
-                proTokenUnmintHandler: proTokenUnmintHandler,
-                priceSettings: proTokenPriceSettings
+                proTokenUnmintHandler: proTokenUnmintHandler
             })
         );
     }

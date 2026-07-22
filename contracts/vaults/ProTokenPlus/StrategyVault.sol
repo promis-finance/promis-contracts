@@ -239,6 +239,10 @@ contract StrategyVault is
         withdrawProUSD -= proUSDAmount;
         withdrawBase = worthBase >= withdrawBase ? 0 : withdrawBase - worthBase;
 
+        earmarkedWithdrawBase = worthBase >= earmarkedWithdrawBase
+            ? 0
+            : earmarkedWithdrawBase - worthBase;
+
         IERC20(proToken).safeTransfer(proTokenPlus, proUSDAmount);
 
         emit Taken(msg.sender, proUSDAmount, worthBase);
@@ -255,7 +259,15 @@ contract StrategyVault is
 
         uint256 proUSDAmount = (worthBase * USD_PRECISION) / price;
 
-        if (proUSDAmount > withdrawProUSD || worthBase > withdrawBase) {
+        uint256 surplusBase = withdrawBase > earmarkedWithdrawBase
+            ? withdrawBase - earmarkedWithdrawBase
+            : 0;
+        uint256 surplusProUSD = (surplusBase * USD_PRECISION) / price;
+
+        if (proUSDAmount > surplusProUSD || 
+            worthBase > surplusBase ||
+            proUSDAmount > withdrawProUSD
+        ) {
             emit RegivenAsync(msg.sender, proUSDAmount, worthBase);
             return;
         }
@@ -266,6 +278,19 @@ contract StrategyVault is
         depositBase    += worthBase;
 
         emit Regiven(msg.sender, proUSDAmount, worthBase);
+    }
+
+    /// @inheritdoc IStrategyVault
+    function earmark(
+        uint256 worthBase
+    ) external override onlyProTokenPlus nonReentrant {
+        _accrueGrowth();
+
+        if (worthBase == 0) revert ZeroAmount();
+
+        earmarkedWithdrawBase += worthBase;
+
+        emit Earmarked(msg.sender, worthBase, earmarkedWithdrawBase);
     }
 
     // ================================================
@@ -365,9 +390,16 @@ contract StrategyVault is
 
         uint256 proUSDAmount = (worthBase * USD_PRECISION) / price;
 
-        if (worthBase > withdrawBase)
-            revert RotateUnderfunded(worthBase, withdrawBase);
-        if (proUSDAmount > withdrawProUSD)
+        uint256 surplusBase = withdrawBase > earmarkedWithdrawBase
+            ? withdrawBase - earmarkedWithdrawBase
+            : 0;
+        uint256 surplusProUSD = (surplusBase * USD_PRECISION) / price;
+
+        if (worthBase > surplusBase)
+            revert RotateUnderfunded(worthBase, surplusBase);
+        if (proUSDAmount > surplusProUSD)
+            revert RotateUnderfunded(proUSDAmount, surplusProUSD);
+        if (proUSDAmount > withdrawProUSD)          // markdown-window belt-and-braces
             revert RotateUnderfunded(proUSDAmount, withdrawProUSD);
 
         withdrawBase   -= worthBase;
@@ -402,10 +434,9 @@ contract StrategyVault is
     }
 
     /// @inheritdoc IStrategyVault
-    
     function claimYield(
         uint256 amount
-    ) external override onlyAdminOrOperator returns (uint256 claimed) {
+    ) external override onlyAdminOrOperator nonReentrant returns (uint256 claimed) {
         _accrueGrowth();
 
         if (amount == 0) revert ZeroAmount();
@@ -413,16 +444,72 @@ contract StrategyVault is
         address recipient = yieldRecipient;
         if (recipient == address(0)) revert YieldRecipientNotSet();
 
+        uint256 price = lastPrice;
+        if (price == 0) revert PriceUnavailable();  
+
         uint256 obligations = depositProUSD + growthProUSD;
         uint256 held = IERC20(proToken).balanceOf(address(this));
         uint256 available = held > obligations ? held - obligations : 0;
 
         if (amount > available) revert ExceedsClaimableYield(amount, available);
 
+        uint256 worthBase = (amount * price) / USD_PRECISION;
+        uint256 surplusBase = withdrawBase > earmarkedWithdrawBase
+            ? withdrawBase - earmarkedWithdrawBase : 0;
+        
+        if (worthBase > surplusBase)
+            revert ExceedsClaimableYield(amount, (surplusBase * USD_PRECISION) / price);
+
         claimed = amount;
+
+        withdrawProUSD = claimed >= withdrawProUSD ? 0 : withdrawProUSD - claimed;
+        withdrawBase   = worthBase >= withdrawBase ? 0 : withdrawBase - worthBase;
+
         IERC20(proToken).safeTransfer(recipient, claimed);
 
         emit YieldClaimed(msg.sender, recipient, claimed);
+    }
+
+    /// @inheritdoc IStrategyVault
+    function markdownPrice() external override onlyAdmin nonReentrant returns (uint256 depositShortfall, uint256 withdrawShortfall) {
+        uint256 livePrice = _tryGetPrice();
+        if (livePrice == 0) revert PriceUnavailable();
+        if (livePrice >= lastPrice) revert NotAMarkdown(livePrice, lastPrice);
+
+        uint256 depositNeed  = (depositBase  * USD_PRECISION) / livePrice;
+        uint256 withdrawNeed = (withdrawBase * USD_PRECISION) / livePrice;
+        depositShortfall  = depositNeed  > depositProUSD  ? depositNeed  - depositProUSD  : 0;
+        withdrawShortfall = withdrawNeed > withdrawProUSD ? withdrawNeed - withdrawProUSD : 0;
+
+        depositDeficit  = depositShortfall;
+        withdrawDeficit = withdrawShortfall;
+
+        uint256 old = lastPrice;
+        lastPrice = livePrice;
+
+        emit PriceMarkedDown(old, livePrice, depositShortfall, withdrawShortfall);
+    }
+
+    /// @inheritdoc IStrategyVault
+    function cover(
+        uint256 toDepositPool,
+        uint256 toWithdrawPool
+    ) external override onlyAdminOrOperator nonReentrant {
+        uint256 total = toWithdrawPool + toDepositPool;
+        if (total == 0) revert ZeroAmount();
+
+        if (toDepositPool > depositDeficit || toWithdrawPool > withdrawDeficit)
+            revert CoverExceedsDeficit(toDepositPool, depositDeficit, toWithdrawPool, withdrawDeficit);
+
+        IERC20(proToken).safeTransferFrom(msg.sender, address(this), total);
+
+        depositProUSD   += toDepositPool;
+        withdrawProUSD  += toWithdrawPool;
+
+        depositDeficit  -= toDepositPool;
+        withdrawDeficit -= toWithdrawPool;
+
+        emit Covered(msg.sender, toDepositPool, toWithdrawPool);
     }
 
     /// @inheritdoc IStrategyVault

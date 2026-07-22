@@ -13,7 +13,7 @@ interface IOracleChainlinkPushAdaptor {
         address indexed pushOracle,
         uint8 priceDecimals
     );
-    event StalenessThresholdUpdated(uint256 threshold);
+    event StalenessThresholdUpdated(address asset, uint256 threshold);
 
     // Errors
     error Unauthorized();
@@ -39,9 +39,10 @@ interface IOracleChainlinkPushAdaptor {
 
     /**
      * @notice Sets the maximum allowed staleness for oracle data
+     * @param asset Asset to change staleness for
      * @param threshold Maximum staleness in seconds
      */
-    function setStalenessThreshold(uint256 threshold) external;
+    function setStalenessThreshold(address asset, uint256 threshold) external;
 
     /**
      * @notice Retrieves the push oracle configuration for a specific asset

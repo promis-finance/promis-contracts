@@ -877,6 +877,25 @@
     "inputs": [
       {
         "internalType": "address",
+        "name": "yAsset",
+        "type": "address"
+      }
+    ],
+    "name": "getUnpaidQueuedLiability",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
         "name": "_proTokenSettings",
         "type": "address"
       },

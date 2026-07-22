@@ -146,6 +146,9 @@ export const ERRORS = {
     InvalidAmount: "InvalidAmount",
     USDPriceDisabled: "USDPriceDisabled",
     PriceNotConfigured: "PriceNotConfigured",
+    NotPriceOperator: "NotPriceOperator",
+    PriceNotIncreasing: "PriceNotIncreasing",
+    PriceStepSizeExceeded: "PriceStepSizeExceeded",
 
     // ERC20 (OZ v5)
     ERC20InvalidReceiver: "ERC20InvalidReceiver",
@@ -183,6 +186,7 @@ export const ERRORS = {
     BelowMinDeposit: "BelowMinDeposit",
     BelowMinWithdraw: "BelowMinWithdraw",
     NotStrategyVault: "NotStrategyVault",
+    ZeroUsdCap: "ZeroUsdCap",
 
     // ProTokenUnmintHandler
     InvalidDuration: "InvalidDuration",
@@ -230,6 +234,9 @@ export const EVENTS = {
     Minted: "Minted",
     Burned: "Burned",
     USDPriceSet: "USDPriceSet",
+    USDPriceUpdated: "USDPriceUpdated",
+    StepSizeChanged: "StepSizeChanged",
+    PriceOperatorSet: "PriceOperatorSet",
 
     // OZ ERC20
     Transfer:      "Transfer",

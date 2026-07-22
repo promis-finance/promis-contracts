@@ -6,9 +6,6 @@ import {
     ProTokenOperations,
     ProTokenUnmintHandler,
     YAssetOperationsHandler,
-    OracleAlgebraAdaptor,
-    OracleRedStoneAdaptor,
-    OracleRedStonePushAdaptor,
     AaveV3YieldHandler,
     MorphoYieldHandler,
     MintableERC20,
@@ -24,6 +21,7 @@ import { DECIMALS_18, DEFAULT_UNMINT_BATCH_DURATION, ONE_USD } from "./constants
 export interface TestAccounts {
     admin: HardhatEthersSigner;
     operator: HardhatEthersSigner;
+    priceOperator: HardhatEthersSigner;
     minter: HardhatEthersSigner;
     user1: HardhatEthersSigner;
     user2: HardhatEthersSigner;
@@ -53,9 +51,9 @@ export interface YAssetSettings {
 // ============================================
 
 export async function getTestAccounts(): Promise<TestAccounts> {
-    const [admin, operator, minter, user1, user2, externalBusiness, authority, attacker, strategyVault, strategist, yieldRecipient] =
+    const [admin, operator, priceOperator, minter, user1, user2, externalBusiness, authority, attacker, strategyVault, strategist, yieldRecipient] =
         await ethers.getSigners();
-    return { admin, operator, minter, user1, user2, externalBusiness, authority, attacker, strategyVault, strategist, yieldRecipient };
+    return { admin, operator, priceOperator, minter, user1, user2, externalBusiness, authority, attacker, strategyVault, strategist, yieldRecipient };
 }
 
 // ============================================
@@ -79,12 +77,13 @@ export async function deployMintableERC20(
 
 export async function deployProTokenSettings(
     admin: HardhatEthersSigner,
-    operator: HardhatEthersSigner
+    operator: HardhatEthersSigner,
+    priceOperator: HardhatEthersSigner,
 ): Promise<ProTokenSettings> {
     const ProTokenSettingsFactory = await ethers.getContractFactory("ProTokenSettings");
     const proTokenSettings = (await upgrades.deployProxy(
         ProTokenSettingsFactory,
-        [admin.address, operator.address],
+        [admin.address, operator.address, priceOperator.address],
         { kind: "uups" }
     )) as unknown as ProTokenSettings;
     await proTokenSettings.waitForDeployment();
@@ -146,49 +145,6 @@ export async function deployYAssetOperationsHandler(
     )) as unknown as YAssetOperationsHandler;
     await yAssetOperationsHandler.waitForDeployment();
     return yAssetOperationsHandler;
-}
-
-// ============================================
-// Oracle Contract Deployment
-// ============================================
-
-export async function deployOracleAlgebraAdaptor(
-    proTokenSettings: string
-): Promise<OracleAlgebraAdaptor> {
-    const OracleAlgebraAdaptorFactory = await ethers.getContractFactory("OracleAlgebraAdaptor");
-    const oracleAlgebraAdaptor = (await upgrades.deployProxy(
-        OracleAlgebraAdaptorFactory,
-        [proTokenSettings],
-        { kind: "uups" }
-    )) as unknown as OracleAlgebraAdaptor;
-    await oracleAlgebraAdaptor.waitForDeployment();
-    return oracleAlgebraAdaptor;
-}
-
-export async function deployOracleRedStoneAdaptor(
-    proTokenSettings: string
-): Promise<OracleRedStoneAdaptor> {
-    const OracleRedStoneAdaptorFactory = await ethers.getContractFactory("OracleRedStoneAdaptor");
-    const oracleRedStoneAdaptor = (await upgrades.deployProxy(
-        OracleRedStoneAdaptorFactory,
-        [proTokenSettings],
-        { kind: "uups" }
-    )) as unknown as OracleRedStoneAdaptor;
-    await oracleRedStoneAdaptor.waitForDeployment();
-    return oracleRedStoneAdaptor;
-}
-
-export async function deployOracleRedStonePushAdaptor(
-    proTokenSettings: string
-): Promise<OracleRedStonePushAdaptor> {
-    const OracleRedStonePushAdaptorFactory = await ethers.getContractFactory("OracleRedStonePushAdaptor");
-    const oracleRedStonePushAdaptor = (await upgrades.deployProxy(
-        OracleRedStonePushAdaptorFactory,
-        [proTokenSettings],
-        { kind: "uups" }
-    )) as unknown as OracleRedStonePushAdaptor;
-    await oracleRedStonePushAdaptor.waitForDeployment();
-    return oracleRedStonePushAdaptor;
 }
 
 // ============================================
@@ -274,7 +230,7 @@ export async function deployFullProtocol(): Promise<FullProtocolDeployment> {
     const accounts = await getTestAccounts();
 
     // Deploy ProTokenSettings
-    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator);
+    const proTokenSettings = await deployProTokenSettings(accounts.admin, accounts.operator, accounts.priceOperator);
     const proTokenSettingsAddress = await proTokenSettings.getAddress();
 
     // Deploy ProTokenOperations first (needed as minter)
@@ -311,19 +267,10 @@ export async function deployFullProtocol(): Promise<FullProtocolDeployment> {
     await proTokenSettings.connect(accounts.admin).setProTokenUnmintHandler(proTokenUnmintHandlerAddress);
 
     // Configure yAsset in settings
-    const yAssetSettings: YAssetSettings = {
-        yOperationsHandler: yAssetOperationsHandlerAddress,
-        decimals: DECIMALS_18,
-        isEnabled: true,
-        isPaused: false,
-        unmintFeePer: 0n,
-        priceSettings: {
-            staticPriceSource: ONE_USD,
-            usdCap: 0n,
-            oraclePriceSources: [],
-        },
-    };
-
+    const yAssetSettings = createDefaultYAssetSettings(
+        yAssetOperationsHandlerAddress,
+        DECIMALS_18,
+    );
     await proTokenSettings.connect(accounts.admin).setYAsset(yAssetAddress, yAssetSettings);
 
     return {
@@ -344,7 +291,8 @@ export async function deployFullProtocol(): Promise<FullProtocolDeployment> {
 export function createDefaultYAssetSettings(
     yOperationsHandler: string,
     decimals: number = DECIMALS_18,
-    staticPrice: bigint = ONE_USD
+    staticPrice: bigint = ONE_USD,
+    usdCap: bigint = ONE_USD,
 ): YAssetSettings {
     return {
         yOperationsHandler,
@@ -354,33 +302,8 @@ export function createDefaultYAssetSettings(
         unmintFeePer: 0n,
         priceSettings: {
             staticPriceSource: staticPrice,
-            usdCap: 0n,
+            usdCap,
             oraclePriceSources: [],
         },
-    };
-}
-
-export function createLstYAssetSettings(
-    yOperationsHandler: string,
-    lstUnderlyingAsset: string,
-    lstRatio: bigint,
-    decimals: number = DECIMALS_18,
-    staticPrice: bigint = ONE_USD
-): YAssetSettings {
-    return {
-        isEnabled: true,
-        isPaused: false,
-        decimals,
-        priceSettings: {
-            staticPriceSource: staticPrice,
-            oraclePriceSources: [],
-            lstUnderlyingAsset,
-            lstUnderlyingAssetRatio: lstRatio,
-            lstUnderlyingAssetStaticPriceSource: ONE_USD,
-            lstUnderlyingAssetOraclePriceSources: [],
-            usdCap: 0n,
-        },
-        unmintFeePer: 0n,
-        yOperationsHandler,
     };
 }
