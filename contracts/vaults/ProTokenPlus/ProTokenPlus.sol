@@ -151,7 +151,8 @@ contract ProTokenPlus is
 
     function finalizeDepositRequest(
         uint256 _requestID, 
-        ProTokenPlusTypes.ProofKind _proofKind, 
+        ProTokenPlusTypes.ProofKind _proofKind,
+        uint256 _deadline, 
         bytes calldata _proof
     ) 
         external 
@@ -162,7 +163,7 @@ contract ProTokenPlus is
         bytes memory result = _delegateToOperations(
             abi.encodeCall(
                 IProTokenPlusOperations.executeFinalizeDepositRequest,
-                (msg.sender, _requestID, _proofKind, _proof)
+                (msg.sender, _requestID, _proofKind, _deadline, _proof)
             )
         );
         return abi.decode(result, (uint256));
@@ -189,6 +190,7 @@ contract ProTokenPlus is
     function finalizeWithdrawRequest(
         uint256 _requestID, 
         ProTokenPlusTypes.ProofKind _proofKind, 
+        uint256 _deadline, 
         bytes calldata _proof
     ) 
         external 
@@ -199,7 +201,7 @@ contract ProTokenPlus is
         bytes memory result = _delegateToOperations(
             abi.encodeCall(
                 IProTokenPlusOperations.executeFinalizeWithdrawRequest,
-                (msg.sender, _requestID, _proofKind, _proof)
+                (msg.sender, _requestID, _proofKind, _deadline, _proof)
             )
         );
         return abi.decode(result, (uint256));

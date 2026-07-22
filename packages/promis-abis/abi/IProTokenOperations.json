@@ -144,6 +144,11 @@
   },
   {
     "inputs": [],
+    "name": "ProofExpired",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "RequestNotPending",
     "type": "error"
   },

@@ -17,6 +17,9 @@ interface IProTokenPlusOperations {
     /// @notice Thrown when the caller parameter doesn't match msg.sender
     error CallerMismatch();
 
+    /// @notice Thrown when a proof signed by backend authority has expired
+    error ProofExpired();
+
     // ============ Execute Functions ============
 
     /// @notice Executes deposit request logic
@@ -36,6 +39,7 @@ interface IProTokenPlusOperations {
         address _caller,
         uint256 _requestID, 
         ProTokenPlusTypes.ProofKind _proofKind, 
+        uint256 _deadline,
         bytes calldata _proof
     ) external returns (uint256 positionID);
 
@@ -54,6 +58,7 @@ interface IProTokenPlusOperations {
         address _caller,
         uint256 _requestID, 
         ProTokenPlusTypes.ProofKind _proofKind, 
+        uint256 _deadline,
         bytes calldata _proof
     ) external returns (uint256 unbondingIndex);
 

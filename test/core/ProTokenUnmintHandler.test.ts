@@ -90,6 +90,8 @@ async function mintProTokensFor(
         })
         .find((e) => e?.name === EVENTS.MintRequestCreated);
     const id = event!.args.requestID as bigint;
+    
+    const FAR_FUTURE = BigInt((await time.latest()) + 3600);
 
     const proofData: ProofData = {
         requestId: id,
@@ -98,6 +100,7 @@ async function mintProTokensFor(
         yAsset: ctx.yAssetAddress,
         amount: yAssetAmount,
         minAmountOut: 0n,
+        deadline: FAR_FUTURE,
         proofKind: ProofKind.PROOF_OF_APPROVE,
     };
     const proof = await signMintProof(
@@ -107,7 +110,7 @@ async function mintProTokensFor(
     );
     await ctx.proTokenOperations
         .connect(user)
-        .finalizeMintRequest(id, ProofKind.PROOF_OF_APPROVE, proof);
+        .finalizeMintRequest(id, ProofKind.PROOF_OF_APPROVE, FAR_FUTURE, proof);
 
     return ctx.proToken.balanceOf(user.address);
 }
@@ -163,6 +166,8 @@ async function createUnmintFor(
         .find((e) => e?.name === EVENTS.UnmintRequestCreated);
     const opsRequestId = event!.args.requestID as bigint;
 
+    const FAR_FUTURE = BigInt((await time.latest()) + 3600);
+
     const proofData: ProofData = {
         requestId: opsRequestId,
         user: user.address,
@@ -170,6 +175,7 @@ async function createUnmintFor(
         yAsset: ctx.yAssetAddress,
         amount: proTokenAmount,
         minAmountOut: 0n,
+        deadline: FAR_FUTURE,
         proofKind: ProofKind.PROOF_OF_APPROVE,
     };
     const proof = await signUnmintProof(
@@ -179,7 +185,7 @@ async function createUnmintFor(
     );
     await ctx.proTokenOperations
         .connect(user)
-        .finalizeUnmintRequest(opsRequestId, ProofKind.PROOF_OF_APPROVE, proof);
+        .finalizeUnmintRequest(opsRequestId, ProofKind.PROOF_OF_APPROVE, FAR_FUTURE, proof);
 
     // Resolve the handler-side request id from the receiver+batch mapping.
     const currentBatchId = await ctx.proTokenUnmintHandler.getCurrentUnmintBatchId(
@@ -339,6 +345,8 @@ describe("ProTokenUnmintHandler", function () {
                 })
                 .find((e) => e?.name === EVENTS.UnmintRequestCreated)!.args
                 .requestID) as bigint;
+            
+            const FAR_FUTURE = BigInt((await time.latest()) + 3600);
 
             const proofData: ProofData = {
                 requestId: opsRequestId,
@@ -347,6 +355,7 @@ describe("ProTokenUnmintHandler", function () {
                 yAsset: ctx.yAssetAddress,
                 amount: bal,
                 minAmountOut: 0n,
+                deadline: FAR_FUTURE,
                 proofKind: ProofKind.PROOF_OF_APPROVE,
             };
             const proof = await signUnmintProof(
@@ -359,7 +368,7 @@ describe("ProTokenUnmintHandler", function () {
             await expect(
                 ctx.proTokenOperations
                     .connect(ctx.accounts.user1)
-                    .finalizeUnmintRequest(opsRequestId, ProofKind.PROOF_OF_APPROVE, proof),
+                    .finalizeUnmintRequest(opsRequestId, ProofKind.PROOF_OF_APPROVE, FAR_FUTURE, proof),
             ).to.emit(ctx.proTokenOperations, EVENTS.ProTokenUnmintInstant);
 
             // No batch should have been created on the handler.
@@ -404,6 +413,8 @@ describe("ProTokenUnmintHandler", function () {
                 })
                 .find((e) => e?.name === EVENTS.UnmintRequestCreated)!.args
                 .requestID) as bigint;
+                
+            const FAR_FUTURE = BigInt((await time.latest()) + 3600);
 
             const proofData: ProofData = {
                 requestId: opsRequestId,
@@ -412,6 +423,7 @@ describe("ProTokenUnmintHandler", function () {
                 yAsset: ctx.yAssetAddress,
                 amount: bal,
                 minAmountOut: 0n,
+                deadline: FAR_FUTURE,
                 proofKind: ProofKind.PROOF_OF_APPROVE,
             };
             const proof = await signUnmintProof(
@@ -425,7 +437,7 @@ describe("ProTokenUnmintHandler", function () {
             await expect(
                 ctx.proTokenOperations
                     .connect(ctx.accounts.user1)
-                    .finalizeUnmintRequest(opsRequestId, ProofKind.PROOF_OF_APPROVE, proof),
+                    .finalizeUnmintRequest(opsRequestId, ProofKind.PROOF_OF_APPROVE, FAR_FUTURE, proof),
             )
                 .to.emit(ctx.proTokenOperations, EVENTS.ProTokenUnmintQueued)
                 .and.to.emit(ctx.proTokenUnmintHandler, EVENTS.UnmintRequestCreated);
@@ -472,6 +484,7 @@ describe("ProTokenUnmintHandler", function () {
                 })
                 .find((e) => e?.name === EVENTS.UnmintRequestCreated)!.args
                 .requestID) as bigint;
+            const FAR_FUTURE = BigInt((await time.latest()) + 3600);
             const proof1 = await signUnmintProof(
                 ctx.accounts.authority,
                 ctx.proTokenOperationsAddress,
@@ -482,12 +495,13 @@ describe("ProTokenUnmintHandler", function () {
                     yAsset: ctx.yAssetAddress,
                     amount: bal1,
                     minAmountOut: 0n,
+                    deadline: FAR_FUTURE,
                     proofKind: ProofKind.PROOF_OF_APPROVE,
                 },
             );
             await ctx.proTokenOperations
                 .connect(ctx.accounts.user1)
-                .finalizeUnmintRequest(opsRequestId1, ProofKind.PROOF_OF_APPROVE, proof1);
+                .finalizeUnmintRequest(opsRequestId1, ProofKind.PROOF_OF_APPROVE, FAR_FUTURE, proof1);
 
             // No batch yet — user1 went instant.
             expect(
@@ -525,13 +539,14 @@ describe("ProTokenUnmintHandler", function () {
                     yAsset: ctx.yAssetAddress,
                     amount: bal2,
                     minAmountOut: 0n,
+                    deadline: FAR_FUTURE,
                     proofKind: ProofKind.PROOF_OF_APPROVE,
                 },
             );
             await expect(
                 ctx.proTokenOperations
                     .connect(ctx.accounts.user2)
-                    .finalizeUnmintRequest(opsRequestId2, ProofKind.PROOF_OF_APPROVE, proof2),
+                    .finalizeUnmintRequest(opsRequestId2, ProofKind.PROOF_OF_APPROVE, FAR_FUTURE, proof2),
             ).to.emit(ctx.proTokenOperations, EVENTS.ProTokenUnmintQueued);
 
             // First batch created only after user2's queued unmint.
@@ -564,6 +579,7 @@ describe("ProTokenUnmintHandler", function () {
                 })
                 .find((e) => e?.name === EVENTS.UnmintRequestCreated)!.args
                 .requestID) as bigint;
+            const FAR_FUTURE = BigInt((await time.latest()) + 3600);
             const proof = await signUnmintProof(
                 ctx.accounts.authority,
                 ctx.proTokenOperationsAddress,
@@ -574,13 +590,14 @@ describe("ProTokenUnmintHandler", function () {
                     yAsset: ctx.yAssetAddress,
                     amount: bal,
                     minAmountOut: 0n,
+                    deadline: FAR_FUTURE,
                     proofKind: ProofKind.PROOF_OF_APPROVE,
                 },
             );
 
             const finalizeTx = await ctx.proTokenOperations
                 .connect(ctx.accounts.user1)
-                .finalizeUnmintRequest(opsRequestId, ProofKind.PROOF_OF_APPROVE, proof);
+                .finalizeUnmintRequest(opsRequestId, ProofKind.PROOF_OF_APPROVE, FAR_FUTURE, proof);
             const finalizeReceipt = await finalizeTx.wait();
 
             const queuedEvent = finalizeReceipt!.logs
@@ -738,6 +755,7 @@ describe("ProTokenUnmintHandler", function () {
             const opsRequestId = createEvent!.args.requestID as bigint;
 
             // Now finalize APPROVE — this is what calls handler.createUnmintRequest
+            const FAR_FUTURE = BigInt((await time.latest()) + 3600);
             const proofData: ProofData = {
                 requestId: opsRequestId,
                 user: ctx.accounts.user1.address,
@@ -745,6 +763,7 @@ describe("ProTokenUnmintHandler", function () {
                 yAsset: ctx.yAssetAddress,
                 amount: bal,
                 minAmountOut: 0n,
+                deadline: FAR_FUTURE,
                 proofKind: ProofKind.PROOF_OF_APPROVE,
             };
             const proof = await signUnmintProof(
@@ -757,7 +776,7 @@ describe("ProTokenUnmintHandler", function () {
             await expect(
                 ctx.proTokenOperations
                     .connect(ctx.accounts.user1)
-                    .finalizeUnmintRequest(opsRequestId, ProofKind.PROOF_OF_APPROVE, proof),
+                    .finalizeUnmintRequest(opsRequestId, ProofKind.PROOF_OF_APPROVE, FAR_FUTURE, proof),
             ).to.emit(ctx.proTokenUnmintHandler, EVENTS.UnmintRequestCreated);
         });
 
@@ -796,6 +815,7 @@ describe("ProTokenUnmintHandler", function () {
                 .find((e) => e?.name === EVENTS.UnmintRequestCreated);
             const opsRequestId = createEvent!.args.requestID as bigint;
 
+            const FAR_FUTURE = BigInt((await time.latest()) + 3600);
             const proofData: ProofData = {
                 requestId: opsRequestId,
                 user: ctx.accounts.user1.address,
@@ -803,6 +823,7 @@ describe("ProTokenUnmintHandler", function () {
                 yAsset: ctx.yAssetAddress,
                 amount: half,
                 minAmountOut: 0n,
+                deadline: FAR_FUTURE,
                 proofKind: ProofKind.PROOF_OF_APPROVE,
             };
             const proof = await signUnmintProof(
@@ -814,7 +835,7 @@ describe("ProTokenUnmintHandler", function () {
             await expect(
                 ctx.proTokenOperations
                     .connect(ctx.accounts.user1)
-                    .finalizeUnmintRequest(opsRequestId, ProofKind.PROOF_OF_APPROVE, proof),
+                    .finalizeUnmintRequest(opsRequestId, ProofKind.PROOF_OF_APPROVE, FAR_FUTURE, proof),
             ).to.emit(ctx.proTokenUnmintHandler, EVENTS.UnmintRequestAggregated);
         });
 

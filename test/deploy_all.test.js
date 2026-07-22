@@ -1,6 +1,14 @@
 const { expect } = require("chai");
 const { ethers, upgrades } = require("hardhat");
 
+// Proof validity window; wide enough for these sequential tests.
+const PROOF_TTL = 3n * 365n * 86400n; // 3 years
+
+async function futureDeadline(ttl = PROOF_TTL) {
+    const block = await ethers.provider.getBlock("latest");
+    return BigInt(block.timestamp) + ttl;
+}
+
 describe("Deployment", function () {
     let deployer;
     let yAsset1;
@@ -226,7 +234,7 @@ describe("Deployment", function () {
         //         Typehash must match ProTokenOperations.MINT_PROOF_TYPEHASH:
         //         MintProof(uint256 requestId,address user,address receiver,
         //                   address yAsset,uint256 amount,uint256 minAmountOut,
-        //                   uint8 proofKind)
+        //                   uint256 deadline,uint8 proofKind)
         // -----------------------------------------------------------------
         console.log("----- proUSD: sign PROOF_OF_APPROVE");
 
@@ -244,9 +252,11 @@ describe("Deployment", function () {
                 { name: "yAsset",       type: "address" },
                 { name: "amount",       type: "uint256" },
                 { name: "minAmountOut", type: "uint256" },
+                { name: "deadline",     type: "uint256" },
                 { name: "proofKind",    type: "uint8" },
             ],
         };
+        const mintDeadline = await futureDeadline();
         const mintValue = {
             requestId:    mintRequestId,
             user:         alice.address,
@@ -254,6 +264,7 @@ describe("Deployment", function () {
             yAsset:       await yAsset1.getAddress(),
             amount:       mintUSDT,
             minAmountOut: minMintOut,
+            deadline:     mintDeadline,
             proofKind:    0, // PROOF_OF_APPROVE
         };
         const mintProof = await deployer.signTypedData(mintDomain, mintTypes, mintValue);
@@ -266,6 +277,7 @@ describe("Deployment", function () {
         await (await proTokenOperations.connect(alice).finalizeMintRequest(
             mintRequestId,
             0, // PROOF_OF_APPROVE
+            mintDeadline,
             mintProof,
         )).wait();
 
@@ -324,7 +336,7 @@ describe("Deployment", function () {
         //         Typehash must match ProTokenPlusOperations.DEPOSIT_PROOF_TYPEHASH:
         //         DepositProof(uint256 requestId,uint8 tierID,uint256 amount,
         //                      address user,uint256[] unlockedPositionsToMerge,
-        //                      uint8 proofKind)
+        //                      uint256 deadline,uint8 proofKind)
         // -----------------------------------------------------------------
         console.log("----- proUSD+: sign PROOF_OF_APPROVE");
 
@@ -341,15 +353,18 @@ describe("Deployment", function () {
                 { name: "amount",                   type: "uint256" },
                 { name: "user",                     type: "address" },
                 { name: "unlockedPositionsToMerge", type: "uint256[]" },
+                { name: "deadline",                 type: "uint256" },
                 { name: "proofKind",                type: "uint8" },
             ],
         };
+        const depositDeadline = await futureDeadline();
         const depositValue = {
             requestId:                depositRequestId,
             tierID:                   tierID,
             amount:                   depositAmount,
             user:                     alice.address,
             unlockedPositionsToMerge: unlockedPositionsToMerge,
+            deadline:                 depositDeadline,
             proofKind:                0, // PROOF_OF_APPROVE
         };
         const depositProof = await deployer.signTypedData(depositDomain, depositTypes, depositValue);
@@ -366,6 +381,7 @@ describe("Deployment", function () {
         await (await proTokenPlus.connect(alice).finalizeDepositRequest(
             depositRequestId,
             0, // PROOF_OF_APPROVE
+            depositDeadline,
             depositProof,
         )).wait();
 

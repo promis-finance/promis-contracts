@@ -48,12 +48,12 @@ import {
 //
 // Domain: ("ProTokenPlus", "1") — set in ProTokenPlus.initialize via __EIP712_init
 // Types:
-//   DepositProof  (requestId, tierID, amount, user, unlockedPositionsToMerge, proofKind)
-//   WithdrawProof (requestId, positionIDs, user, unlockedPositionsToMerge, proofKind)
+//   DepositProof  (requestId, tierID, amount, user, unlockedPositionsToMerge, deadline, proofKind)
+//   WithdrawProof (requestId, positionIDs, user, unlockedPositionsToMerge, deadline, proofKind)
 //
 // NOTE: withdrawal has no `amount` — createWithdrawRequest(positionIDs,
 // unlockedPositionsToMerge) always withdraws the FULL listed position(s), and the
-// WithdrawProof typehash has no amount field (5 fields). Partial exits are done by
+// WithdrawProof typehash has no amount field (6 fields). Partial exits are done by
 // splitting positions beforehand, not by passing a partial amount.
 // ---------------------------------------------------------------------------
 
@@ -68,6 +68,7 @@ interface DepositProofData {
     amount: bigint;
     user: string;
     unlockedPositionsToMerge: bigint[];
+    deadline: bigint;
     proofKind: VaultProofKind;
 }
 
@@ -76,6 +77,7 @@ interface WithdrawProofData {
     positionIDs: bigint[];
     user: string;
     unlockedPositionsToMerge: bigint[];
+    deadline: bigint;
     proofKind: VaultProofKind;
 }
 
@@ -86,6 +88,7 @@ const DEPOSIT_PROOF_TYPES = {
         { name: "amount", type: "uint256" },
         { name: "user", type: "address" },
         { name: "unlockedPositionsToMerge", type: "uint256[]" },
+        { name: "deadline", type: "uint256" },
         { name: "proofKind", type: "uint8" },
     ],
 };
@@ -96,6 +99,7 @@ const WITHDRAW_PROOF_TYPES = {
         { name: "positionIDs", type: "uint256[]" },
         { name: "user", type: "address" },
         { name: "unlockedPositionsToMerge", type: "uint256[]" },
+        { name: "deadline", type: "uint256" },
         { name: "proofKind", type: "uint8" },
     ],
 };
@@ -103,6 +107,14 @@ const WITHDRAW_PROOF_TYPES = {
 async function buildVaultDomain(verifyingContract: string) {
     const chainId = (await ethers.provider.getNetwork()).chainId;
     return { name: "ProTokenPlus", version: "1", chainId, verifyingContract };
+}
+
+// Default proof validity window. Wide enough that intra-test `time.increase`
+// calls (lock expiry, unbonding) never expire a proof signed earlier.
+const PROOF_TTL = 365n * BigInt(ONE_DAY) * 3n; // 3 years
+
+async function futureDeadline(ttl: bigint = PROOF_TTL): Promise<bigint> {
+    return BigInt(await time.latest()) + ttl;
 }
 
 async function signDepositProof(
@@ -395,18 +407,20 @@ async function depositFor(
         .find((e) => e?.name === "DepositRequestCreated");
     const requestId = createEvent!.args.requestID as bigint;
 
+    const deadline = await futureDeadline();
     const proof = await signDepositProof(ctx.accounts.authority, ctx.proTokenPlusAddress, {
         requestId,
         tierID: tierId,
         amount,
         user: user.address,
         unlockedPositionsToMerge,
+        deadline,
         proofKind: VaultProofKind.PROOF_OF_APPROVE,
     });
 
     const finalizeTx = await ctx.proTokenPlus
         .connect(user)
-        .finalizeDepositRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, proof);
+        .finalizeDepositRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, deadline, proof);
     const finalizeReceipt = await finalizeTx.wait();
     const finalizeEvent = finalizeReceipt!.logs
         .map((l) => {
@@ -492,17 +506,19 @@ async function withdrawFor(
         .find((e) => e?.name === "WithdrawRequestCreated");
     const requestId = createEvent!.args.requestID as bigint;
 
+    const deadline = await futureDeadline();
     const proof = await signWithdrawProof(ctx.accounts.authority, ctx.proTokenPlusAddress, {
         requestId,
         positionIDs: positionIds,
         user: user.address,
         unlockedPositionsToMerge,
+        deadline,
         proofKind: VaultProofKind.PROOF_OF_APPROVE,
     });
 
     const finalizeTx = await ctx.proTokenPlus
         .connect(user)
-        .finalizeWithdrawRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, proof);
+        .finalizeWithdrawRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, deadline, proof);
     const finalizeReceipt = await finalizeTx.wait();
     const finalizeEvent = finalizeReceipt!.logs
         .map((l) => {
@@ -809,15 +825,17 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                 .find((e) => e?.name === "DepositRequestCreated");
             const requestId = createEvent!.args.requestID as bigint;
 
+            const deadline = await futureDeadline();
             const proof = await signDepositProof(ctx.accounts.authority, ctx.proTokenPlusAddress, {
                 requestId,
                 tierID: QUARTERLY_TIER_ID,
                 amount: HUNDRED_TOKENS,
                 user: user.address,
                 unlockedPositionsToMerge: [],
+                deadline,
                 proofKind: VaultProofKind.PROOF_OF_RETURN,
             });
-            await ctx.proTokenPlus.connect(user).finalizeDepositRequest(requestId, VaultProofKind.PROOF_OF_RETURN, proof);
+            await ctx.proTokenPlus.connect(user).finalizeDepositRequest(requestId, VaultProofKind.PROOF_OF_RETURN, deadline, proof);
 
             expect(await ctx.proUSD.balanceOf(user.address)).to.equal(userBalBefore);
             // No give() happened.
@@ -844,17 +862,19 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                 .find((e) => e?.name === "DepositRequestCreated");
             const requestId = event!.args.requestID as bigint;
 
+            const deadline = await futureDeadline();
             const proof = await signDepositProof(ctx.accounts.authority, ctx.proTokenPlusAddress, {
                 requestId,
                 tierID: QUARTERLY_TIER_ID,
                 amount: HUNDRED_TOKENS,
                 user: ctx.accounts.user1.address,
                 unlockedPositionsToMerge: [],
+                deadline,
                 proofKind: VaultProofKind.PROOF_OF_APPROVE,
             });
 
             await expect(
-                ctx.proTokenPlus.connect(ctx.accounts.user2).finalizeDepositRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, proof),
+                ctx.proTokenPlus.connect(ctx.accounts.user2).finalizeDepositRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, deadline, proof),
             ).to.be.revertedWithCustomError(ctx.proTokenPlus, "Unauthorized");
         });
 
@@ -874,17 +894,19 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                 .find((e) => e?.name === "DepositRequestCreated");
             const requestId = event!.args.requestID as bigint;
 
+            const deadline = await futureDeadline();
             const badProof = await signDepositProof(ctx.accounts.attacker, ctx.proTokenPlusAddress, {
                 requestId,
                 tierID: QUARTERLY_TIER_ID,
                 amount: HUNDRED_TOKENS,
                 user: user.address,
                 unlockedPositionsToMerge: [],
+                deadline,
                 proofKind: VaultProofKind.PROOF_OF_APPROVE,
             });
 
             await expect(
-                ctx.proTokenPlus.connect(user).finalizeDepositRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, badProof),
+                ctx.proTokenPlus.connect(user).finalizeDepositRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, deadline, badProof),
             ).to.be.revertedWithCustomError(ctx.proTokenPlus, "InvalidAuthority");
         });
 
@@ -893,16 +915,18 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             const user = ctx.accounts.user1;
             await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
 
+            const deadline = await futureDeadline();
             const proof = await signDepositProof(ctx.accounts.authority, ctx.proTokenPlusAddress, {
                 requestId: 0n,
                 tierID: QUARTERLY_TIER_ID,
                 amount: HUNDRED_TOKENS,
                 user: user.address,
                 unlockedPositionsToMerge: [],
+                deadline,
                 proofKind: VaultProofKind.PROOF_OF_APPROVE,
             });
             await expect(
-                ctx.proTokenPlus.connect(user).finalizeDepositRequest(0n, VaultProofKind.PROOF_OF_APPROVE, proof),
+                ctx.proTokenPlus.connect(user).finalizeDepositRequest(0n, VaultProofKind.PROOF_OF_APPROVE, deadline, proof),
             ).to.be.revertedWithCustomError(ctx.proTokenPlus, "RequestNotPending");
         });
 
@@ -927,9 +951,255 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                     ctx.accounts.user1.address,
                     0n,
                     VaultProofKind.PROOF_OF_APPROVE,
+                    0n,
                     "0x",
                 ),
             ).to.be.revertedWithCustomError(ctx.proTokenPlusOperations, "DirectCallForbidden");
+        });
+    });
+
+    // =======================================================================
+    // Proof deadline enforcement (ProTokenPlusOperations)
+    //
+    // _verifyProof recovers the signer over a struct that INCLUDES the deadline,
+    // then executeFinalizeDepositRequest / executeFinalizeWithdrawRequest check
+    // `block.timestamp > deadline` → ProofExpired. Two properties matter:
+    //   1. an expired proof cannot finalize, and the revert leaves the request
+    //      PENDING so the backend can re-issue with a fresh deadline;
+    //   2. the submitted deadline is signature-bound — passing a different one
+    //      than was signed recovers a non-authority signer → InvalidAuthority.
+    // =======================================================================
+    describe("Proof deadline enforcement (ProTokenPlusOperations)", function () {
+        // Create a deposit request only (no finalize); returns its id.
+        async function createDepositRequest(
+            ctx: ProTokenPlusFixture,
+            user: HardhatEthersSigner,
+            tierId: number,
+            amount: bigint,
+        ): Promise<bigint> {
+            const tx = await ctx.proTokenPlus
+                .connect(user)
+                .createDepositRequest(tierId, amount, []);
+            const receipt = await tx.wait();
+            return receipt!.logs
+                .map((l) => { try { return ctx.proTokenPlus.interface.parseLog(l as never); } catch { return null; } })
+                .find((e) => e?.name === "DepositRequestCreated")!.args.requestID as bigint;
+        }
+
+        it("finalizeDepositRequest reverts ProofExpired once block.timestamp passes the deadline", async function () {
+            const ctx = await loadFixture(proTokenPlusFixture);
+            const user = ctx.accounts.user1;
+
+            const requestId = await createDepositRequest(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
+
+            const deadline = await futureDeadline(60n); // 60s validity
+            const proof = await signDepositProof(ctx.accounts.authority, ctx.proTokenPlusAddress, {
+                requestId,
+                tierID: QUARTERLY_TIER_ID,
+                amount: HUNDRED_TOKENS,
+                user: user.address,
+                unlockedPositionsToMerge: [],
+                deadline,
+                proofKind: VaultProofKind.PROOF_OF_APPROVE,
+            });
+
+            await time.increaseTo(Number(deadline) + 1);
+
+            await expect(
+                ctx.proTokenPlus.connect(user).finalizeDepositRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, deadline, proof),
+            ).to.be.revertedWithCustomError(ctx.proTokenPlusOperations, "ProofExpired");
+        });
+
+        it("an expired proof leaves the request PENDING; a re-signed fresh proof finalizes it", async function () {
+            const ctx = await loadFixture(proTokenPlusFixture);
+            const user = ctx.accounts.user1;
+
+            const requestId = await createDepositRequest(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
+
+            const staleDeadline = await futureDeadline(60n);
+            const staleProof = await signDepositProof(ctx.accounts.authority, ctx.proTokenPlusAddress, {
+                requestId,
+                tierID: QUARTERLY_TIER_ID,
+                amount: HUNDRED_TOKENS,
+                user: user.address,
+                unlockedPositionsToMerge: [],
+                deadline: staleDeadline,
+                proofKind: VaultProofKind.PROOF_OF_APPROVE,
+            });
+            await time.increaseTo(Number(staleDeadline) + 1);
+            await expect(
+                ctx.proTokenPlus.connect(user).finalizeDepositRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, staleDeadline, staleProof),
+            ).to.be.revertedWithCustomError(ctx.proTokenPlusOperations, "ProofExpired");
+
+            // The revert rolled back the EXECUTED flip — backend re-issues for the
+            // same request with a fresh deadline and the user finalizes normally.
+            const freshDeadline = await futureDeadline();
+            const freshProof = await signDepositProof(ctx.accounts.authority, ctx.proTokenPlusAddress, {
+                requestId,
+                tierID: QUARTERLY_TIER_ID,
+                amount: HUNDRED_TOKENS,
+                user: user.address,
+                unlockedPositionsToMerge: [],
+                deadline: freshDeadline,
+                proofKind: VaultProofKind.PROOF_OF_APPROVE,
+            });
+            await expect(
+                ctx.proTokenPlus.connect(user).finalizeDepositRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, freshDeadline, freshProof),
+            ).to.emit(ctx.proTokenPlus, "DepositRequestFinalized");
+        });
+
+        it("submitting a stretched deadline invalidates the signature (InvalidAuthority)", async function () {
+            const ctx = await loadFixture(proTokenPlusFixture);
+            const user = ctx.accounts.user1;
+
+            const requestId = await createDepositRequest(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
+
+            // Authority signs a short deadline; the caller submits a longer one.
+            // The recovered signer no longer matches any authority.
+            const signedDeadline = await futureDeadline(60n);
+            const proof = await signDepositProof(ctx.accounts.authority, ctx.proTokenPlusAddress, {
+                requestId,
+                tierID: QUARTERLY_TIER_ID,
+                amount: HUNDRED_TOKENS,
+                user: user.address,
+                unlockedPositionsToMerge: [],
+                deadline: signedDeadline,
+                proofKind: VaultProofKind.PROOF_OF_APPROVE,
+            });
+
+            const stretchedDeadline = signedDeadline + PROOF_TTL;
+            await expect(
+                ctx.proTokenPlus.connect(user).finalizeDepositRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, stretchedDeadline, proof),
+            ).to.be.revertedWithCustomError(ctx.proTokenPlus, "InvalidAuthority");
+        });
+
+        it("a deposit proof exactly AT the deadline is still valid (strict > comparison)", async function () {
+            const ctx = await loadFixture(proTokenPlusFixture);
+            const user = ctx.accounts.user1;
+
+            const requestId = await createDepositRequest(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
+
+            const deadline = await futureDeadline(3600n);
+            const proof = await signDepositProof(ctx.accounts.authority, ctx.proTokenPlusAddress, {
+                requestId,
+                tierID: QUARTERLY_TIER_ID,
+                amount: HUNDRED_TOKENS,
+                user: user.address,
+                unlockedPositionsToMerge: [],
+                deadline,
+                proofKind: VaultProofKind.PROOF_OF_APPROVE,
+            });
+
+            // Pin the finalize block's timestamp to equal the deadline:
+            // block.timestamp > deadline is false → succeeds.
+            await time.setNextBlockTimestamp(Number(deadline));
+            await expect(
+                ctx.proTokenPlus.connect(user).finalizeDepositRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, deadline, proof),
+            ).to.emit(ctx.proTokenPlus, "DepositRequestFinalized");
+        });
+
+        it("finalizeWithdrawRequest reverts ProofExpired past the deadline; withdrawal state is untouched", async function () {
+            const ctx = await loadFixture(proTokenPlusFixture);
+            const user = ctx.accounts.user1;
+
+            const positionId = await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
+            await time.increase(Number(QUARTERLY_DURATION) + 1);
+
+            const createTx = await ctx.proTokenPlus.connect(user).createWithdrawRequest([positionId], []);
+            const requestId = (await createTx.wait())!.logs
+                .map((l) => { try { return ctx.proTokenPlus.interface.parseLog(l as never); } catch { return null; } })
+                .find((e) => e?.name === "WithdrawRequestCreated")!.args.requestID as bigint;
+
+            const deadline = await futureDeadline(60n);
+            const proof = await signWithdrawProof(ctx.accounts.authority, ctx.proTokenPlusAddress, {
+                requestId,
+                positionIDs: [positionId],
+                user: user.address,
+                unlockedPositionsToMerge: [],
+                deadline,
+                proofKind: VaultProofKind.PROOF_OF_APPROVE,
+            });
+            await time.increaseTo(Number(deadline) + 1);
+
+            await expect(
+                ctx.proTokenPlus.connect(user).finalizeWithdrawRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, deadline, proof),
+            ).to.be.revertedWithCustomError(ctx.proTokenPlusOperations, "ProofExpired");
+
+            // Withdrawal state untouched: the position is still ACTIVE and no
+            // unbonding was started by the reverted finalize.
+            const positions = await ctx.proTokenPlus.getUserPositions([positionId]);
+            expect(positions[0].status).to.equal(POSITION_STATUS_ACTIVE);
+            expect(await ctx.proTokenPlus.getUnbondingRequestCount(user.address)).to.equal(0n);
+        });
+
+        it("an expired withdraw proof can be re-issued with a fresh deadline for the same request", async function () {
+            const ctx = await loadFixture(proTokenPlusFixture);
+            const user = ctx.accounts.user1;
+
+            const positionId = await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
+            await time.increase(Number(QUARTERLY_DURATION) + 1);
+
+            const createTx = await ctx.proTokenPlus.connect(user).createWithdrawRequest([positionId], []);
+            const requestId = (await createTx.wait())!.logs
+                .map((l) => { try { return ctx.proTokenPlus.interface.parseLog(l as never); } catch { return null; } })
+                .find((e) => e?.name === "WithdrawRequestCreated")!.args.requestID as bigint;
+
+            const staleDeadline = await futureDeadline(60n);
+            const staleProof = await signWithdrawProof(ctx.accounts.authority, ctx.proTokenPlusAddress, {
+                requestId,
+                positionIDs: [positionId],
+                user: user.address,
+                unlockedPositionsToMerge: [],
+                deadline: staleDeadline,
+                proofKind: VaultProofKind.PROOF_OF_APPROVE,
+            });
+            await time.increaseTo(Number(staleDeadline) + 1);
+            await expect(
+                ctx.proTokenPlus.connect(user).finalizeWithdrawRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, staleDeadline, staleProof),
+            ).to.be.revertedWithCustomError(ctx.proTokenPlusOperations, "ProofExpired");
+
+            // Backend re-issues with a fresh deadline; the same request finalizes.
+            const freshDeadline = await futureDeadline();
+            const freshProof = await signWithdrawProof(ctx.accounts.authority, ctx.proTokenPlusAddress, {
+                requestId,
+                positionIDs: [positionId],
+                user: user.address,
+                unlockedPositionsToMerge: [],
+                deadline: freshDeadline,
+                proofKind: VaultProofKind.PROOF_OF_APPROVE,
+            });
+            await expect(
+                ctx.proTokenPlus.connect(user).finalizeWithdrawRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, freshDeadline, freshProof),
+            ).to.emit(ctx.proTokenPlus, "UnbondingStarted");
+        });
+
+        it("stretched deadline on a withdraw proof recovers a non-authority (InvalidAuthority)", async function () {
+            const ctx = await loadFixture(proTokenPlusFixture);
+            const user = ctx.accounts.user1;
+
+            const positionId = await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
+            await time.increase(Number(QUARTERLY_DURATION) + 1);
+
+            const createTx = await ctx.proTokenPlus.connect(user).createWithdrawRequest([positionId], []);
+            const requestId = (await createTx.wait())!.logs
+                .map((l) => { try { return ctx.proTokenPlus.interface.parseLog(l as never); } catch { return null; } })
+                .find((e) => e?.name === "WithdrawRequestCreated")!.args.requestID as bigint;
+
+            // Authority signs a short deadline; the caller submits a longer one.
+            const signedDeadline = await futureDeadline(60n);
+            const proof = await signWithdrawProof(ctx.accounts.authority, ctx.proTokenPlusAddress, {
+                requestId,
+                positionIDs: [positionId],
+                user: user.address,
+                unlockedPositionsToMerge: [],
+                deadline: signedDeadline,
+                proofKind: VaultProofKind.PROOF_OF_APPROVE,
+            });
+
+            const stretchedDeadline = signedDeadline + PROOF_TTL;
+            await expect(
+                ctx.proTokenPlus.connect(user).finalizeWithdrawRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, stretchedDeadline, proof),
+            ).to.be.revertedWithCustomError(ctx.proTokenPlus, "InvalidAuthority");
         });
     });
 
@@ -1386,16 +1656,18 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                 .find((e) => e?.name === "WithdrawRequestCreated");
             const requestId = event!.args.requestID as bigint;
 
+            const deadline = await futureDeadline();
             const proof = await signWithdrawProof(ctx.accounts.authority, ctx.proTokenPlusAddress, {
                 requestId,
                 positionIDs: [positionId],
                 user: user.address,
                 unlockedPositionsToMerge: [],
+                deadline,
                 proofKind: VaultProofKind.PROOF_OF_RETURN,
             });
 
             await expect(
-                ctx.proTokenPlus.connect(user).finalizeWithdrawRequest(requestId, VaultProofKind.PROOF_OF_RETURN, proof),
+                ctx.proTokenPlus.connect(user).finalizeWithdrawRequest(requestId, VaultProofKind.PROOF_OF_RETURN, deadline, proof),
             ).to.be.revertedWithCustomError(ctx.proTokenPlus, "IrrelevantProofKind");
         });
 
@@ -1896,16 +2168,18 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             const requestId = (await createTx.wait())!.logs
                 .map((l) => { try { return ctx.proTokenPlus.interface.parseLog(l as never); } catch { return null; } })
                 .find((e) => e?.name === "WithdrawRequestCreated")!.args.requestID as bigint;
+            const deadline = await futureDeadline();
             const proof = await signWithdrawProof(ctx.accounts.authority, ctx.proTokenPlusAddress, {
                 requestId,
                 positionIDs: [positionId],
                 user: user.address,
                 unlockedPositionsToMerge: [],
+                deadline,
                 proofKind: VaultProofKind.PROOF_OF_APPROVE,
             });
 
             await expect(
-                ctx.proTokenPlus.connect(user).finalizeWithdrawRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, proof),
+                ctx.proTokenPlus.connect(user).finalizeWithdrawRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, deadline, proof),
             )
                 .to.emit(ctx.strategyVault, "Earmarked")
                 .withArgs(ctx.proTokenPlusAddress, totalBase, totalBase);
@@ -2367,7 +2641,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             ).to.be.revertedWithCustomError(ctx.proTokenPlusOperations, "DirectCallForbidden");
 
             await expect(
-                ctx.proTokenPlusOperations.executeFinalizeDepositRequest(ctx.accounts.user1.address, 0n, VaultProofKind.PROOF_OF_APPROVE, "0x"),
+                ctx.proTokenPlusOperations.executeFinalizeDepositRequest(ctx.accounts.user1.address, 0n, VaultProofKind.PROOF_OF_APPROVE, 0n, "0x"),
             ).to.be.revertedWithCustomError(ctx.proTokenPlusOperations, "DirectCallForbidden");
 
             await expect(
@@ -2375,7 +2649,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             ).to.be.revertedWithCustomError(ctx.proTokenPlusOperations, "DirectCallForbidden");
 
             await expect(
-                ctx.proTokenPlusOperations.executeFinalizeWithdrawRequest(ctx.accounts.user1.address, 0n, VaultProofKind.PROOF_OF_APPROVE, "0x"),
+                ctx.proTokenPlusOperations.executeFinalizeWithdrawRequest(ctx.accounts.user1.address, 0n, VaultProofKind.PROOF_OF_APPROVE, 0n, "0x"),
             ).to.be.revertedWithCustomError(ctx.proTokenPlusOperations, "DirectCallForbidden");
 
             await expect(
@@ -2540,15 +2814,17 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                 })
                 .find((e) => e?.name === "DepositRequestCreated")!.args.requestID as bigint;
 
+            const deadline = await futureDeadline();
             const proof = await signDepositProof(ctx.accounts.authority, ctx.proTokenPlusAddress, {
                 requestId,
                 tierID: QUARTERLY_TIER_ID,
                 amount: HUNDRED_TOKENS,
                 user: user.address,
                 unlockedPositionsToMerge: [],
+                deadline,
                 proofKind: VaultProofKind.PROOF_OF_RETURN,
             });
-            await ctx.proTokenPlus.connect(user).finalizeDepositRequest(requestId, VaultProofKind.PROOF_OF_RETURN, proof);
+            await ctx.proTokenPlus.connect(user).finalizeDepositRequest(requestId, VaultProofKind.PROOF_OF_RETURN, deadline, proof);
 
             expect(await ctx.proTokenPlus.totalDepositsBase()).to.equal(0n);
             await expectDepositsBaseInvariant(ctx, [user]);
@@ -2775,17 +3051,19 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                 })
                 .find((e) => e?.name === "DepositRequestCreated")!.args.requestID as bigint;
 
+            const deadline = await futureDeadline();
             const proof = await signDepositProof(ctx.accounts.authority, ctx.proTokenPlusAddress, {
                 requestId,
                 tierID: ANNUAL_TIER_ID,
                 amount: MIN_DEPOSIT,
                 user: user.address,
                 unlockedPositionsToMerge: [],
+                deadline,
                 proofKind: VaultProofKind.PROOF_OF_APPROVE,
             });
 
             await expect(
-                ctx.proTokenPlus.connect(user).finalizeDepositRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, proof),
+                ctx.proTokenPlus.connect(user).finalizeDepositRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, deadline, proof),
             ).to.be.revertedWithCustomError(ctx.proTokenPlus, "DepositCapReached");
 
             // Ledger unchanged by the reverted deposit.
@@ -2808,17 +3086,19 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                 })
                 .find((e) => e?.name === "DepositRequestCreated")!.args.requestID as bigint;
 
+            const deadline = await futureDeadline();
             const proof = await signDepositProof(ctx.accounts.authority, ctx.proTokenPlusAddress, {
                 requestId,
                 tierID: ANNUAL_TIER_ID,
                 amount: MIN_DEPOSIT * 6n,
                 user: user.address,
                 unlockedPositionsToMerge: [],
+                deadline,
                 proofKind: VaultProofKind.PROOF_OF_APPROVE,
             });
 
             await expect(
-                ctx.proTokenPlus.connect(user).finalizeDepositRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, proof),
+                ctx.proTokenPlus.connect(user).finalizeDepositRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, deadline, proof),
             ).to.be.revertedWithCustomError(ctx.proTokenPlus, "DepositCapReached");
         });
 
@@ -2890,16 +3170,18 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                     try { return ctx.proTokenPlus.interface.parseLog(l as never); } catch { return null; }
                 })
                 .find((e) => e?.name === "DepositRequestCreated")!.args.requestID as bigint;
+            const deadline = await futureDeadline();
             const proof = await signDepositProof(ctx.accounts.authority, ctx.proTokenPlusAddress, {
                 requestId,
                 tierID: ANNUAL_TIER_ID,
                 amount: MIN_DEPOSIT,
                 user: user.address,
                 unlockedPositionsToMerge: [],
+                deadline,
                 proofKind: VaultProofKind.PROOF_OF_APPROVE,
             });
             await expect(
-                ctx.proTokenPlus.connect(user).finalizeDepositRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, proof),
+                ctx.proTokenPlus.connect(user).finalizeDepositRequest(requestId, VaultProofKind.PROOF_OF_APPROVE, deadline, proof),
             ).to.be.revertedWithCustomError(ctx.proTokenPlus, "DepositCapReached");
         });
     });

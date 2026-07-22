@@ -40,6 +40,11 @@ interface IProToken {
     /// @param _stepSize The USD price step size in 18 decimal format
     function setStepSize(uint256 _stepSize) external;
 
+    /// @notice Sets the cooldown for USD price update
+    /// @dev Only callable by admin.
+    /// @param _cooldown The new cooldown
+    function setPriceUpdateCooldown(uint256 _cooldown) external;
+
     // ================================================
     // =========== Owner External Functions ===========
     // ================================================
@@ -95,6 +100,11 @@ interface IProToken {
     /// @param prevSize The old USD price step size in 18 decimal format
     /// @param size The new USD price step size in 18 decimal format
     event StepSizeChanged(uint256 prevSize, uint256 size);
+    
+    /// @notice Emitted when the USD price change cooldown was set by admin
+    /// @param prevCd The old USD price change cooldown
+    /// @param newCd The new USD price change cooldown
+    event PriceUpdateCooldownChanged(uint256 prevCd, uint256 newCd);
 
     // ================================================
     // ==================== Errors ====================
@@ -117,6 +127,9 @@ interface IProToken {
 
     /// @dev An invalid price is provided (must be >= 1e18)
     error InvalidPrice();
+
+    /// @dev An invalid price update time
+    error PriceUpdateCooldownActive(uint256 availableAt, uint256 currentTime);
 
     /// @dev A non-increasing price was provided
     error PriceNotIncreasing();

@@ -25,6 +25,9 @@ import {
     getTestAccounts,
 } from "../helpers/deploy";
 
+// Mirrors ProToken.DEFAULT_PRICE_UPDATE_COOLDOWN (23 hours, in seconds).
+const PRICE_UPDATE_COOLDOWN = 23 * 60 * 60;
+
 // ---------------------------------------------------------------------------
 // ProToken — unit tests
 //
@@ -64,6 +67,11 @@ describe("ProToken", function () {
             const { proToken } = await loadFixture(proTokenFixture);
             expect(await proToken.DEFAULT_USD_PRICE()).to.equal(DEFAULT_USD_PRICE);
         });
+
+        it("DEFAULT_PRICE_UPDATE_COOLDOWN = 23 hours", async function () {
+            const { proToken } = await loadFixture(proTokenFixture);
+            expect(await proToken.DEFAULT_PRICE_UPDATE_COOLDOWN()).to.equal(BigInt(PRICE_UPDATE_COOLDOWN));
+        });
     });
 
     // =======================================================================
@@ -94,6 +102,16 @@ describe("ProToken", function () {
         it("initializes usdPrice to DEFAULT_USD_PRICE", async function () {
             const { proToken } = await loadFixture(proTokenFixture);
             expect(await proToken.getUSDPrice()).to.equal(DEFAULT_USD_PRICE);
+        });
+
+        it("initializes priceUpdateCooldown to DEFAULT_PRICE_UPDATE_COOLDOWN", async function () {
+            const { proToken } = await loadFixture(proTokenFixture);
+            expect(await proToken.getPriceUpdateCooldown()).to.equal(BigInt(PRICE_UPDATE_COOLDOWN));
+        });
+
+        it("lastPriceUpdateAt starts at 0 (first operator update needs no wait)", async function () {
+            const { proToken } = await loadFixture(proTokenFixture);
+            expect(await proToken.getLastPriceUpdateAt()).to.equal(0n);
         });
 
         it("totalSupply starts at zero", async function () {
@@ -435,7 +453,9 @@ describe("ProToken", function () {
             const p3 = ethers.parseUnits("1.15", 18);
 
             await proToken.connect(accounts.priceOperator).updateUSDPrice(p1);
+            await time.increase(PRICE_UPDATE_COOLDOWN + 1); // respect the 23h cooldown
             await proToken.connect(accounts.priceOperator).updateUSDPrice(p2);
+            await time.increase(PRICE_UPDATE_COOLDOWN + 1);
             await proToken.connect(accounts.priceOperator).updateUSDPrice(p3);
             expect(await proToken.getUSDPrice()).to.equal(p3);
         });
@@ -450,6 +470,7 @@ describe("ProToken", function () {
         it("reverts PriceNotIncreasing when new price is lower (no markdowns on this path)", async function () {
             const { proToken, accounts } = await loadFixture(proTokenFixture);
             await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.5", 18));
+            await time.increase(PRICE_UPDATE_COOLDOWN + 1); // past the cooldown so monotonicity is what fires
             await expect(
                 proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.2", 18))
             ).to.be.revertedWithCustomError(proToken, ERRORS.PriceNotIncreasing);
@@ -536,6 +557,7 @@ describe("ProToken", function () {
                 await proToken.connect(accounts.admin).setStepSize(STEP);
 
                 await proToken.connect(accounts.priceOperator).updateUSDPrice(DEFAULT_USD_PRICE + STEP);
+                await time.increase(PRICE_UPDATE_COOLDOWN + 1); // respect the 23h cooldown
                 await proToken.connect(accounts.priceOperator).updateUSDPrice(DEFAULT_USD_PRICE + STEP * 2n);
                 expect(await proToken.getUSDPrice()).to.equal(DEFAULT_USD_PRICE + STEP * 2n);
             });
@@ -554,9 +576,98 @@ describe("ProToken", function () {
                 await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("2", 18));
                 // ...then admin bounds it; an over-step now reverts.
                 await proToken.connect(accounts.admin).setStepSize(STEP);
+                await time.increase(PRICE_UPDATE_COOLDOWN + 1); // past the cooldown so the step check is what fires
                 await expect(
                     proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("3", 18))
                 ).to.be.revertedWithCustomError(proToken, ERRORS.PriceStepSizeExceeded);
+            });
+        });
+
+        describe("price update cooldown (23h)", function () {
+            it("first update after deployment needs no wait", async function () {
+                const { proToken, accounts } = await loadFixture(proTokenFixture);
+                await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.1", 18));
+                expect(await proToken.getUSDPrice()).to.equal(ethers.parseUnits("1.1", 18));
+            });
+
+            it("second update within the window reverts PriceUpdateCooldownActive", async function () {
+                const { proToken, accounts } = await loadFixture(proTokenFixture);
+                await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.1", 18));
+
+                await time.increase(60 * 60); // 1h — still 22h short
+                await expect(
+                    proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.2", 18))
+                ).to.be.revertedWithCustomError(proToken, ERRORS.PriceUpdateCooldownActive);
+            });
+
+            it("update succeeds once the cooldown has elapsed", async function () {
+                const { proToken, accounts } = await loadFixture(proTokenFixture);
+                await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.1", 18));
+
+                await time.increase(PRICE_UPDATE_COOLDOWN + 1);
+                await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.2", 18));
+                expect(await proToken.getUSDPrice()).to.equal(ethers.parseUnits("1.2", 18));
+            });
+
+            it("passes at exactly availableAt (boundary: check is strict <)", async function () {
+                const { proToken, accounts } = await loadFixture(proTokenFixture);
+                await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.1", 18));
+                const last = await proToken.getLastPriceUpdateAt();
+
+                // Next tx mines at last + COOLDOWN exactly → block.timestamp == availableAt → passes.
+                await time.increaseTo(last + BigInt(PRICE_UPDATE_COOLDOWN) - 1n);
+                await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.2", 18));
+                expect(await proToken.getUSDPrice()).to.equal(ethers.parseUnits("1.2", 18));
+            });
+
+            it("a reverted attempt does not extend the window", async function () {
+                const { proToken, accounts } = await loadFixture(proTokenFixture);
+                await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.1", 18));
+                const last = await proToken.getLastPriceUpdateAt();
+
+                await time.increase(60 * 60);
+                await expect(
+                    proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.2", 18))
+                ).to.be.revertedWithCustomError(proToken, ERRORS.PriceUpdateCooldownActive);
+
+                // The window is still keyed to the ORIGINAL successful update.
+                await time.increaseTo(last + BigInt(PRICE_UPDATE_COOLDOWN) + 1n);
+                await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.2", 18));
+                expect(await proToken.getUSDPrice()).to.equal(ethers.parseUnits("1.2", 18));
+            });
+
+            it("admin setUSDPrice bypasses the cooldown and does not start one", async function () {
+                const { proToken, accounts } = await loadFixture(proTokenFixture);
+
+                // Admin sets a price; the operator can still update immediately
+                // (lastPriceUpdateAt is untouched by the admin path).
+                await proToken.connect(accounts.admin).setUSDPrice(ethers.parseUnits("1.5", 18));
+                await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.6", 18));
+                expect(await proToken.getUSDPrice()).to.equal(ethers.parseUnits("1.6", 18));
+            });
+
+            it("admin markdown during the window does not reset the operator's clock", async function () {
+                const { proToken, accounts } = await loadFixture(proTokenFixture);
+                await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.1", 18));
+                const last = await proToken.getLastPriceUpdateAt();
+
+                // Admin can act freely mid-window...
+                await proToken.connect(accounts.admin).setUSDPrice(ethers.parseUnits("1.02", 18));
+
+                // ...but the operator remains bound to the original window.
+                await expect(
+                    proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.06", 18))
+                ).to.be.revertedWithCustomError(proToken, ERRORS.PriceUpdateCooldownActive);
+
+                await time.increaseTo(last + BigInt(PRICE_UPDATE_COOLDOWN) + 1n);
+                await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.06", 18));
+                expect(await proToken.getUSDPrice()).to.equal(ethers.parseUnits("1.06", 18));
+            });
+
+            it("getLastPriceUpdateAt tracks the last successful operator update", async function () {
+                const { proToken, accounts } = await loadFixture(proTokenFixture);
+                await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.1", 18));
+                expect(await proToken.getLastPriceUpdateAt()).to.equal(BigInt(await time.latest()));
             });
         });
     });
@@ -621,6 +732,69 @@ describe("ProToken", function () {
             const { proToken, accounts } = await loadFixture(proTokenFixture);
             await expect(
                 proToken.connect(accounts.attacker).setStepSize(STEP)
+            ).to.be.revertedWithCustomError(proToken, ERRORS.NotAdmin);
+        });
+    });
+
+    // =======================================================================
+    // setPriceUpdateCooldown (ADMIN-only)
+    // =======================================================================
+    describe("setPriceUpdateCooldown()", function () {
+        const ONE_HOUR = 60 * 60;
+
+        it("admin can change the cooldown (getter reflects it)", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await proToken.connect(accounts.admin).setPriceUpdateCooldown(ONE_HOUR);
+            expect(await proToken.getPriceUpdateCooldown()).to.equal(BigInt(ONE_HOUR));
+        });
+
+        it("emits PriceUpdateCooldownChanged(prev, new)", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await expect(proToken.connect(accounts.admin).setPriceUpdateCooldown(ONE_HOUR))
+                .to.emit(proToken, EVENTS.PriceUpdateCooldownChanged)
+                .withArgs(BigInt(PRICE_UPDATE_COOLDOWN), BigInt(ONE_HOUR));
+        });
+
+        it("cooldown = 0 disables the wait (immediate sequential updates pass)", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await proToken.connect(accounts.admin).setPriceUpdateCooldown(0n);
+
+            await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.1", 18));
+            await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.2", 18));
+            expect(await proToken.getUSDPrice()).to.equal(ethers.parseUnits("1.2", 18));
+        });
+
+        it("shortening the cooldown applies to the already-running window", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.1", 18));
+
+            // 23h window is running; admin shortens it to 1h.
+            await proToken.connect(accounts.admin).setPriceUpdateCooldown(ONE_HOUR);
+            await time.increase(ONE_HOUR + 1);
+
+            // Passes 1h after the last update — no need to wait out the original 23h.
+            await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.2", 18));
+            expect(await proToken.getUSDPrice()).to.equal(ethers.parseUnits("1.2", 18));
+        });
+
+        it("reverts when called by operator", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await expect(
+                proToken.connect(accounts.operator).setPriceUpdateCooldown(ONE_HOUR)
+            ).to.be.revertedWithCustomError(proToken, ERRORS.NotAdmin);
+        });
+
+        it("reverts when called by priceOperator (cannot loosen own constraint)", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await expect(
+                proToken.connect(accounts.priceOperator).setPriceUpdateCooldown(0n)
+            ).to.be.revertedWithCustomError(proToken, ERRORS.NotAdmin);
+        });
+
+        it("reverts when called by random attacker", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await expect(
+                proToken.connect(accounts.attacker).setPriceUpdateCooldown(ONE_HOUR)
             ).to.be.revertedWithCustomError(proToken, ERRORS.NotAdmin);
         });
     });
@@ -1304,6 +1478,7 @@ describe("ProToken", function () {
 
             // Routine appreciation via the constrained path.
             await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.05", 18));
+            await time.increase(PRICE_UPDATE_COOLDOWN + 1); // respect the 23h cooldown
             await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.10", 18));
 
             // Slash: admin marks down (the only role that can decrease).
@@ -1311,6 +1486,8 @@ describe("ProToken", function () {
             expect(await proToken.getUSDPrice()).to.equal(ethers.parseUnits("1.02", 18));
 
             // Recovery: priceOperator resumes increases from the marked-down level.
+            // (The admin markdown does not reset the operator's cooldown window.)
+            await time.increase(PRICE_UPDATE_COOLDOWN + 1);
             await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.06", 18));
             expect(await proToken.getUSDPrice()).to.equal(ethers.parseUnits("1.06", 18));
         });

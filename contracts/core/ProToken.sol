@@ -30,6 +30,9 @@ contract ProToken is
     /// @notice Default USD price set at initialization (1 USD, 18 decimals).
     uint256 public constant DEFAULT_USD_PRICE = 1e18;
 
+    /// @notice Default minimum interval between operator price updates.
+    uint256 public constant DEFAULT_PRICE_UPDATE_COOLDOWN = 23 hours;
+
     /// @notice ProTokenSettings contract, source of admin/operator roles.
     address private proTokenSettings;
 
@@ -41,6 +44,12 @@ contract ProToken is
 
     /// @notice Increase step size of USD price allowed (0 means steps disabled).
     uint256 private stepSize;
+
+    /// @notice Minimum interval between operator price updates (0 disables the cooldown).
+    uint256 private priceUpdateCooldown;
+
+    /// @notice Timestamp of the last operator price update (updateUSDPrice).
+    uint256 private lastPriceUpdateAt;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -70,6 +79,7 @@ contract ProToken is
         minter = _minter;
         proTokenSettings = _proTokenSettings;
         usdPrice = DEFAULT_USD_PRICE;
+        priceUpdateCooldown = DEFAULT_PRICE_UPDATE_COOLDOWN;
     }
 
     /// @notice Restricts access to the admin.
@@ -119,6 +129,11 @@ contract ProToken is
     function updateUSDPrice(uint256 _price) external override onlyPriceOperator {
         if (_price < MIN_USD_PRICE && _price != 0) revert InvalidPrice();
 
+        uint256 availableAt = lastPriceUpdateAt + priceUpdateCooldown;
+        if (block.timestamp < availableAt) {
+            revert PriceUpdateCooldownActive(availableAt, block.timestamp);
+        }
+
         uint256 old = usdPrice;
 
         if (old == 0) revert USDPriceDisabled();
@@ -126,6 +141,7 @@ contract ProToken is
         if (stepSize != 0 && _price - old > stepSize) revert PriceStepSizeExceeded();
 
         usdPrice = _price;
+        lastPriceUpdateAt = block.timestamp;
 
         emit USDPriceUpdated(old, _price);
     }
@@ -139,6 +155,18 @@ contract ProToken is
         emit StepSizeChanged(old, _stepSize);
     }
 
+    /**
+     * @notice Sets the minimum interval between operator price updates.
+     * @dev A value of 0 disables the cooldown. Does not reset the running
+     *      cooldown window from the last update.
+     * @param _cooldown New cooldown in seconds.
+     */
+    function setPriceUpdateCooldown(uint256 _cooldown) external override onlyAdmin {
+        uint256 old = priceUpdateCooldown;
+        priceUpdateCooldown = _cooldown;
+
+        emit PriceUpdateCooldownChanged(old, _cooldown);
+    }
 
     /// @inheritdoc IProToken
     function mint(address to, uint256 amount) external override onlyMinter {
@@ -165,6 +193,16 @@ contract ProToken is
     function getUSDPrice() external view override returns (uint256) {
         if (usdPrice == 0) revert USDPriceDisabled();
         return usdPrice;
+    }
+
+    /// @notice Returns the current price update cooldown in seconds.
+    function getPriceUpdateCooldown() external view returns (uint256) {
+        return priceUpdateCooldown;
+    }
+
+    /// @notice Returns the timestamp of the last operator price update.
+    function getLastPriceUpdateAt() external view returns (uint256) {
+        return lastPriceUpdateAt;
     }
 
     /// @inheritdoc IProToken

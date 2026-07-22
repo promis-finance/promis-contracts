@@ -50,10 +50,10 @@ contract ProTokenOperations is
     uint256 private constant USD_PRECISION = 1e18;
 
     /// @notice Signature hash for async minting proof
-    bytes32 private constant MINT_PROOF_TYPEHASH = keccak256("MintProof(uint256 requestId,address user,address receiver,address yAsset,uint256 amount,uint256 minAmountOut,uint8 proofKind)");
+    bytes32 private constant MINT_PROOF_TYPEHASH = keccak256("MintProof(uint256 requestId,address user,address receiver,address yAsset,uint256 amount,uint256 minAmountOut,uint256 deadline,uint8 proofKind)");
     
     /// @notice Signature hash for async unminting proof
-    bytes32 private constant UNMINT_PROOF_TYPEHASH = keccak256("UnmintProof(uint256 requestId,address user,address receiver,address yAsset,uint256 amount,uint256 minAmountOut,uint8 proofKind)");
+    bytes32 private constant UNMINT_PROOF_TYPEHASH = keccak256("UnmintProof(uint256 requestId,address user,address receiver,address yAsset,uint256 amount,uint256 minAmountOut,uint256 deadline,uint8 proofKind)");
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -175,6 +175,7 @@ contract ProTokenOperations is
     function finalizeMintRequest(
         uint256 _requestID, 
         ProTokenOperationsTypes.ProofKind _proofKind, 
+        uint256 _deadline,
         bytes calldata _proof
     ) external whenNotPaused nonReentrant {
         ProTokenOperationsTypes.Request storage request = mintRequests[_requestID];
@@ -190,14 +191,13 @@ contract ProTokenOperations is
                 request.yAsset,
                 request.amount,
                 request.minAmountOut,
+                _deadline,
                 uint8(_proofKind)
             )
         );
 
-        _verifyProof(
-            structHash,
-            _proof
-        );
+        _verifyProof(structHash, _proof);
+        if (block.timestamp > _deadline) revert ProofExpired();
 
         request.status = ProTokenOperationsTypes.Status.EXECUTED;
 
@@ -299,6 +299,7 @@ contract ProTokenOperations is
     function finalizeUnmintRequest(
         uint256 _requestID, 
         ProTokenOperationsTypes.ProofKind _proofKind, 
+        uint256 _deadline,
         bytes calldata _proof
     ) external whenNotPaused nonReentrant {
         ProTokenOperationsTypes.Request storage request = unmintRequests[_requestID];
@@ -314,14 +315,13 @@ contract ProTokenOperations is
                 request.yAsset,
                 request.amount,
                 request.minAmountOut,
+                _deadline,
                 uint8(_proofKind)
             )
         );
         
-        _verifyProof(
-            structHash,
-            _proof
-        );
+        _verifyProof(structHash, _proof);
+        if (block.timestamp > _deadline) revert ProofExpired();
 
         request.status = ProTokenOperationsTypes.Status.EXECUTED;
 

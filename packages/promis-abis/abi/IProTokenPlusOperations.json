@@ -10,6 +10,11 @@
     "type": "error"
   },
   {
+    "inputs": [],
+    "name": "ProofExpired",
+    "type": "error"
+  },
+  {
     "inputs": [
       {
         "internalType": "address",
@@ -101,6 +106,11 @@
         "type": "uint8"
       },
       {
+        "internalType": "uint256",
+        "name": "_deadline",
+        "type": "uint256"
+      },
+      {
         "internalType": "bytes",
         "name": "_proof",
         "type": "bytes"
@@ -133,6 +143,11 @@
         "internalType": "enum ProTokenPlusTypes.ProofKind",
         "name": "_proofKind",
         "type": "uint8"
+      },
+      {
+        "internalType": "uint256",
+        "name": "_deadline",
+        "type": "uint256"
       },
       {
         "internalType": "bytes",
