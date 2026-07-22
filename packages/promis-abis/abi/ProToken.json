@@ -238,6 +238,22 @@
     "type": "error"
   },
   {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "availableAt",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "currentTime",
+        "type": "uint256"
+      }
+    ],
+    "name": "PriceUpdateCooldownActive",
+    "type": "error"
+  },
+  {
     "inputs": [],
     "name": "SameAddress",
     "type": "error"
@@ -391,6 +407,25 @@
       {
         "indexed": false,
         "internalType": "uint256",
+        "name": "prevCd",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "newCd",
+        "type": "uint256"
+      }
+    ],
+    "name": "PriceUpdateCooldownChanged",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "uint256",
         "name": "prevSize",
         "type": "uint256"
       },
@@ -479,6 +514,19 @@
     ],
     "name": "Upgraded",
     "type": "event"
+  },
+  {
+    "inputs": [],
+    "name": "DEFAULT_PRICE_UPDATE_COOLDOWN",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
   },
   {
     "inputs": [],
@@ -688,12 +736,38 @@
   },
   {
     "inputs": [],
+    "name": "getLastPriceUpdateAt",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "getMinter",
     "outputs": [
       {
         "internalType": "address",
         "name": "",
         "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "getPriceUpdateCooldown",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
       }
     ],
     "stateMutability": "view",
@@ -868,6 +942,19 @@
       }
     ],
     "name": "setMinter",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "_cooldown",
+        "type": "uint256"
+      }
+    ],
+    "name": "setPriceUpdateCooldown",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
