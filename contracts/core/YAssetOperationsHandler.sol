@@ -106,8 +106,6 @@ contract YAssetOperationsHandler is
             revert Unauthorized();
         }
 
-        emit YAssetsAllocated(_amount);
-
         _allocateToHandlers(_amount);
     }
 
@@ -551,6 +549,8 @@ contract YAssetOperationsHandler is
             }
             unchecked { ++i; }
         }
+
+        emit YAssetsAllocated(_amount);
     }
 
     function _authorizeUpgrade(
