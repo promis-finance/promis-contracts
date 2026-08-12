@@ -467,7 +467,7 @@ interface IProTokenPlus {
 
     /// @notice Thrown when tier duration is zero for non-floor tiers
     error InvalidDuration();
-    
+    error FloorTierNotDepositable();
     /// @notice Thrown when duplicate position IDs are provided in an array
     /// @param positionId The duplicate position ID
     error DuplicatePositionId(uint256 positionId);

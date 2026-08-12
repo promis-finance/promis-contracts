@@ -85,6 +85,8 @@ contract ProTokenPlus is
             uint8 tierId = _tierIds[i];
             if (bytes(_tierConfigs[i].name).length == 0) revert EmptyTierName();
             if (tierId != FLOOR_TIER_ID && _tierConfigs[i].duration == 0) revert InvalidDuration();
+            if (tierId == FLOOR_TIER_ID && _tierConfigs[i].isDepositable) revert FloorTierNotDepositable();
+
             tierIds.push(tierId);
             tiers[tierId] = _tierConfigs[i];
             emit TierAdded(
@@ -299,7 +301,8 @@ contract ProTokenPlus is
         }
         if (bytes(config.name).length == 0) revert EmptyTierName(); 
         if (tierId != FLOOR_TIER_ID && config.duration == 0) revert InvalidDuration();
-
+        if (tierId == FLOOR_TIER_ID && config.isDepositable) revert FloorTierNotDepositable();
+        
         tierIds.push(tierId);
         tiers[tierId] = config;
 
@@ -330,6 +333,7 @@ contract ProTokenPlus is
 
         // Non-floor tiers must have duration > 0
         if (tierId != FLOOR_TIER_ID && duration == 0) revert InvalidDuration();
+        if (tierId == FLOOR_TIER_ID && isDepositable) revert FloorTierNotDepositable();
 
         tier.name = name;
         tier.apr = apr;
