@@ -67,6 +67,9 @@ import {
 // a `deadline`, which is part of the signed struct AND passed as the third
 // argument to the finalize functions. The flow helpers below sign and pass an
 // explicit deadline (a wide TTL so intra-test time travel never expires one).
+//
+// MERGE: unlockedPositionsToMerge has been removed from deposit/withdraw/relock
+// and their proofs — merge is now a standalone unlockedMerge call only.
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -84,7 +87,6 @@ const DEPOSIT_PROOF_TYPES = {
         { name: "tierID", type: "uint8" },
         { name: "amount", type: "uint256" },
         { name: "user", type: "address" },
-        { name: "unlockedPositionsToMerge", type: "uint256[]" },
         { name: "deadline", type: "uint256" },
         { name: "proofKind", type: "uint8" },
     ],
@@ -95,7 +97,6 @@ const WITHDRAW_PROOF_TYPES = {
         { name: "requestId", type: "uint256" },
         { name: "positionIDs", type: "uint256[]" },
         { name: "user", type: "address" },
-        { name: "unlockedPositionsToMerge", type: "uint256[]" },
         { name: "deadline", type: "uint256" },
         { name: "proofKind", type: "uint8" },
     ],
@@ -317,7 +318,7 @@ async function depositFor(
 ): Promise<bigint> {
     const createTx = await ctx.proTokenPlus
         .connect(user)
-        .createDepositRequest(tierId, amount, []);
+        .createDepositRequest(tierId, amount);
     const createReceipt = await createTx.wait();
     const createEvent = createReceipt!.logs
         .map((l) => { try { return ctx.proTokenPlus.interface.parseLog(l as never); } catch { return null; } })
@@ -331,7 +332,6 @@ async function depositFor(
         tierID: tierId,
         amount,
         user: user.address,
-        unlockedPositionsToMerge: [],
         deadline,
         proofKind: VaultProofKind.PROOF_OF_APPROVE,
     });
@@ -353,7 +353,7 @@ async function withdrawFor(
 ): Promise<bigint> {
     const createTx = await ctx.proTokenPlus
         .connect(user)
-        .createWithdrawRequest(positionIds, []);
+        .createWithdrawRequest(positionIds);
     const createReceipt = await createTx.wait();
     const createEvent = createReceipt!.logs
         .map((l) => { try { return ctx.proTokenPlus.interface.parseLog(l as never); } catch { return null; } })
@@ -366,7 +366,6 @@ async function withdrawFor(
         requestId,
         positionIDs: positionIds,
         user: user.address,
-        unlockedPositionsToMerge: [],
         deadline,
         proofKind: VaultProofKind.PROOF_OF_APPROVE,
     });
@@ -554,7 +553,7 @@ describe("StrategyVault: slash markdown and cover", function () {
 
             // Pre-cover: the reserve can't stretch to the $1.02 token count.
             await expect(
-                ctx.proTokenPlus.connect(user).completeWithdraw([unbondingIndex], []),
+                ctx.proTokenPlus.connect(user).completeWithdraw([unbondingIndex]),
             ).to.be.revertedWithCustomError(ctx.strategyVault, "WithdrawReserveUnderfunded");
 
             // Operator covers the measured withdraw-side hole.
@@ -566,7 +565,7 @@ describe("StrategyVault: slash markdown and cover", function () {
             // Post-cover: the same withdrawal succeeds, paid at $1.02.
             const balBefore = await ctx.proUSD.balanceOf(user.address);
             const reserveBefore = await ctx.strategyVault.withdrawProUSD();
-            await ctx.proTokenPlus.connect(user).completeWithdraw([unbondingIndex], []);
+            await ctx.proTokenPlus.connect(user).completeWithdraw([unbondingIndex]);
             const received = (await ctx.proUSD.balanceOf(user.address)) - balBefore;
             const consumed = reserveBefore - (await ctx.strategyVault.withdrawProUSD());
 

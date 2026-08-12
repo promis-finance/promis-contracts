@@ -125,7 +125,6 @@ library ProTokenPlusTypes {
      * @param tierID Target tier.
      * @param status Lifecycle state, internally enforced.
      * @param amount proUSD deposited.
-     * @param unlockedPositionsToMerge Unlocked positions to merge on finalize.
      */
     struct DepositRequest {
         // ---- slot 0: address (20) + uint8 (1) + enum (1) packed ----
@@ -134,8 +133,6 @@ library ProTokenPlusTypes {
         Status status;
         // ---- slot 1 ----
         uint256 amount;
-        // ---- dynamic array ----
-        uint256[] unlockedPositionsToMerge;
     }
 
     /**
@@ -143,7 +140,6 @@ library ProTokenPlusTypes {
      * @param user The withdrawer.
      * @param status Lifecycle state, internally enforced.
      * @param positionIDs Positions to withdraw in full.
-     * @param unlockedPositionsToMerge Unlocked positions to merge on finalize.
      */
     struct WithdrawRequest {
         // ---- slot 0: address (20) + enum (1) packed ----
@@ -151,7 +147,6 @@ library ProTokenPlusTypes {
         Status status;
         // ---- dynamic arrays ----
         uint256[] positionIDs;
-        uint256[] unlockedPositionsToMerge;
     }
 
     /**

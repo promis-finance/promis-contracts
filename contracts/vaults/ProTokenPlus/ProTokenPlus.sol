@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Proprietary
 pragma solidity 0.8.29;
-pragma abicoder v2;
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
@@ -133,8 +132,7 @@ contract ProTokenPlus is
     /// @inheritdoc IProTokenPlus
     function createDepositRequest(
         uint8 _tierID,
-        uint256 _amount,
-        uint256[] calldata _unlockedPositionsToMerge
+        uint256 _amount
     ) 
         external
         override
@@ -144,7 +142,7 @@ contract ProTokenPlus is
         _delegateToOperations(
             abi.encodeCall(
                 IProTokenPlusOperations.executeCreateDepositRequest,
-                (msg.sender, _tierID, _amount, _unlockedPositionsToMerge)
+                (msg.sender, _tierID, _amount)
             )
         );
     }
@@ -171,8 +169,7 @@ contract ProTokenPlus is
 
     /// @inheritdoc IProTokenPlus
     function createWithdrawRequest(
-        uint256[] calldata _positionIDs,
-        uint256[] calldata _unlockedPositionsToMerge
+        uint256[] calldata _positionIDs
     ) 
         external 
         override
@@ -182,7 +179,7 @@ contract ProTokenPlus is
         _delegateToOperations(
             abi.encodeCall(
                 IProTokenPlusOperations.executeCreateWithdrawRequest,
-                (msg.sender, _positionIDs, _unlockedPositionsToMerge)
+                (msg.sender, _positionIDs)
             )
         );
     }
@@ -209,13 +206,12 @@ contract ProTokenPlus is
 
     /// @inheritdoc IProTokenPlus
     function completeWithdraw(
-        uint256[] calldata unbondingIndices,
-        uint256[] calldata unlockedPositionsToMerge
+        uint256[] calldata unbondingIndices
     ) external override nonReentrant whenNotPaused {
         _delegateToOperations(
             abi.encodeCall(
                 IProTokenPlusOperations.executeCompleteWithdraw,
-                (msg.sender, unbondingIndices, unlockedPositionsToMerge)
+                (msg.sender, unbondingIndices)
             )
         );
     }
@@ -224,8 +220,7 @@ contract ProTokenPlus is
     function relock(
         uint256[] calldata positionIds,
         uint256 amount,
-        uint8 toTierId,
-        uint256[] calldata unlockedPositionsToMerge
+        uint8 toTierId
     )
         external
         override
@@ -240,8 +235,7 @@ contract ProTokenPlus is
                     msg.sender,
                     positionIds,
                     amount,
-                    toTierId,
-                    unlockedPositionsToMerge
+                    toTierId
                 )
             )
         );
