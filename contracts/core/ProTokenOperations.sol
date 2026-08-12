@@ -876,7 +876,7 @@ contract ProTokenOperations is
 
         // Validate price deviation if multiple oracles responded
         if (_oracles.length > 1) {
-            _validatePriceDeviation(prices, _oracles.length, aggregatedPrice);
+            _validatePriceDeviation(prices, _oracles.length);
         }
     }
 
@@ -905,13 +905,11 @@ contract ProTokenOperations is
 
     function _validatePriceDeviation(
         uint256[] memory prices,
-        uint256 length,
-        uint256 medianPrice
+        uint256 length
     ) internal view {
         ProTokenOperationsTypes.OracleAggregationSettings
             memory settings = IProTokenSettings(proTokenSettings)
                 .getOracleAggregationSettings();
-
         if (settings.maxPriceDeviation == 0) {
             return; // No deviation check configured
         }
@@ -921,26 +919,6 @@ contract ProTokenOperations is
         uint256 spread = ((maxPrice - minPrice) * PERCENTAGE_PRECISION) / minPrice;
         if (spread > settings.maxPriceDeviation) {
             revert OraclePriceDeviation(spread, settings.maxPriceDeviation);
-        }
-        
-        for (uint256 i = 0; i < length; i++) {
-            uint256 deviation;
-            if (prices[i] > medianPrice) {
-                deviation =
-                    ((prices[i] - medianPrice) * PERCENTAGE_PRECISION) /
-                    medianPrice;
-            } else {
-                deviation =
-                    ((medianPrice - prices[i]) * PERCENTAGE_PRECISION) /
-                    medianPrice;
-            }
-
-            if (deviation > settings.maxPriceDeviation) {
-                revert OraclePriceDeviation(
-                    deviation,
-                    settings.maxPriceDeviation
-                );
-            }
         }
     }
 
