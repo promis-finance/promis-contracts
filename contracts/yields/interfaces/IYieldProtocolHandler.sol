@@ -88,4 +88,10 @@ interface IYieldProtocolHandler {
     function withdrawYieldAsset(
         uint256 amount
     ) external returns (uint256 actualAmount);
+
+    /** @notice Whether this handler should receive new allocation right now.
+     *          False when the venue is in a state where fresh capital would be
+     *          unsafe (e.g. Aave reserve deficit above tolerance). Must NOT revert.
+     */
+    function acceptsAllocation() external view returns (bool);
 }

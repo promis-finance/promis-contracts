@@ -306,6 +306,8 @@ contract MorphoYieldHandler is
         return morphoMarketParams;
     }
 
+    function acceptsAllocation() external override view returns (bool) { return true; }
+
     // ================================================
     // ============== Internal Functions ==============
     // ================================================

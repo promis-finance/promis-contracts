@@ -23,5 +23,5 @@ abstract contract MorphoYieldHandlerState {
     address internal morphoCoreContract;
 
     /// @notice Storage gap for future upgrades
-    uint256[50] internal __gap;
+    uint256[42] internal __gap;
 }

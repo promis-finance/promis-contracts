@@ -171,6 +171,11 @@ interface IYAssetOperationsHandler {
     event YAssetsDistributed(address indexed handler, uint256 amount);
 
     /**
+     * @notice Emitted when allocation is skipped if acceptsAllocation returns false.
+     */
+    event AllocationSkipped(address indexed handlerAddr, uint256 allocationAmount);
+
+    /**
      * @notice Emitted when a handler withdraw operation completes.
      */
     event YAssetsWithdrawn(

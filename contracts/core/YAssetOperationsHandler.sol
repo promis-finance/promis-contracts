@@ -500,25 +500,41 @@ contract YAssetOperationsHandler is
 
     function _allocateToHandlers(uint256 _amount) internal {
         if (_amount == 0) return;
-
         uint256 len = protocolHandlers.length;
         uint256 remainingAmount = _amount;
+
         for (uint256 i = 0; i < len; ) {
             YAssetOperationsHandlerTypes.YieldProtocolHandler storage handler = protocolHandlers[i];
+            address handlerAddr = handler.handlerContract;
+
+            // Skip venues that refuse allocation (e.g. impaired Aave reserve). Their
+            // share is NOT force-fed; it stays as idle backing on this contract —
+            // idle yAsset is fully-backed, just not yield-earning until the venue
+            // recovers or admin re-routes. This avoids a DoS where one venue's
+            // external deficit would otherwise revert the whole distribution
+            // (and, upstream, block minting).
+            bool accepts;
+            try IYieldProtocolHandler(handlerAddr).acceptsAllocation() returns (bool a) {
+                accepts = a;
+            } catch {} // unreadable probe → don't route new capital there
 
             uint256 allocationAmount;
             if (i == len - 1) {
-                allocationAmount = remainingAmount;
+                allocationAmount = remainingAmount; // last handler mops up the remainder
             } else {
                 allocationAmount = (_amount * handler.allocationPercentage) / ALLOCATION_PRECISION;
                 remainingAmount -= allocationAmount;
             }
 
-            if (allocationAmount > 0) {
-                address handlerAddr = handler.handlerContract;
+            if (accepts && allocationAmount > 0) {
                 IERC20(yAsset).forceApprove(handlerAddr, allocationAmount);
                 IYieldProtocolHandler(handlerAddr).depositYieldAsset(allocationAmount);
                 emit YAssetsDistributed(handlerAddr, allocationAmount);
+            } else if (!accepts && allocationAmount > 0) {
+                // Refused: leave this portion idle on the handler contract.
+                // (remainingAmount was already decremented for non-last handlers;
+                //  the tokens simply aren't forwarded — they stay in balanceOf(this).)
+                emit AllocationSkipped(handlerAddr, allocationAmount);
             }
             unchecked { ++i; }
         }
