@@ -241,9 +241,6 @@ contract ProTokenUnmintHandler is
 
         // check this batch exists
         if (unmintBatch.batchId == 0) revert InvalidInput();
-        // check if can be processed
-        if (unmintBatch.createTimestamp + unmintBatchDuration > block.timestamp)
-            revert BatchStillProcessing();
         if (unmintBatch.processed) revert BatchAlreadyProcessed();
 
         // mark as processed
@@ -413,10 +410,6 @@ contract ProTokenUnmintHandler is
 
         // Already processed
         if (unmintBatch.processed) return false;
-
-        // Duration hasn't passed yet
-        if (unmintBatch.createTimestamp + unmintBatchDuration > block.timestamp)
-            return false;
 
         return true;
     }

@@ -989,18 +989,6 @@ describe("ProTokenUnmintHandler", function () {
             );
         });
 
-        it("reverts BatchStillProcessing before duration elapses", async function () {
-            const ctx = await loadFixture(setupPendingBatch);
-            await expect(
-                ctx.proTokenUnmintHandler
-                    .connect(ctx.accounts.admin)
-                    .processNextUnmintBatch(ctx.yAssetAddress),
-            ).to.be.revertedWithCustomError(
-                ctx.proTokenUnmintHandler,
-                ERRORS.BatchStillProcessing,
-            );
-        });
-
         it("reverts when protocol is globally paused", async function () {
             const ctx = await loadFixture(setupPendingBatch);
             const duration = await ctx.proTokenUnmintHandler.getUnmintBatchDuration();
@@ -1395,18 +1383,6 @@ describe("ProTokenUnmintHandler", function () {
                 await loadFixture(fullProtocolFixture);
             expect(
                 await proTokenUnmintHandler.canBatchBeProcessed(yAssetAddress, 1n),
-            ).to.equal(false);
-        });
-
-        it("canBatchBeProcessed: false when duration has not elapsed", async function () {
-            const ctx = await loadFixture(fullProtocolFixture);
-            await authorizeBackend(ctx);
-            await mintProTokensFor(ctx, ctx.accounts.user1, HUNDRED_TOKENS);
-            const bal = await ctx.proToken.balanceOf(ctx.accounts.user1.address);
-            await createUnmintFor(ctx, ctx.accounts.user1, bal);
-
-            expect(
-                await ctx.proTokenUnmintHandler.canBatchBeProcessed(ctx.yAssetAddress, 1n),
             ).to.equal(false);
         });
 
