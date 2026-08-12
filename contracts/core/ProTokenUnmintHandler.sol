@@ -196,7 +196,8 @@ contract ProTokenUnmintHandler is
                 amount, existingRequest.totalAmount, block.timestamp
             );
         } else {
-            uint256 newRequestId = nextUnmintRequestIdPerYAsset[yAsset];
+            uint256 newRequestId;
+            unchecked { newRequestId = ++nextUnmintRequestIdPerYAsset[yAsset]; }
             ProTokenUnmintHandlerTypes.UnmintRequest storage newRequest =
                 unmintRequestsPerYAsset[yAsset][newRequestId];
             newRequest.yAsset = yAsset;
