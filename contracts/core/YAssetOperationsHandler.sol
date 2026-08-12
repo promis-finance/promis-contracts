@@ -539,8 +539,14 @@ contract YAssetOperationsHandler is
 
             if (accepts && allocationAmount > 0) {
                 IERC20(yAsset).forceApprove(handlerAddr, allocationAmount);
-                IYieldProtocolHandler(handlerAddr).depositYieldAsset(allocationAmount);
-                emit YAssetsDistributed(handlerAddr, allocationAmount);
+                try IYieldProtocolHandler(handlerAddr).depositYieldAsset(allocationAmount) {
+                    emit YAssetsDistributed(handlerAddr, allocationAmount);
+                } catch {
+                    // Deposit reverted despite passing the probe → clear the approval and
+                    // leave this share as idle backing on this contract.
+                    IERC20(yAsset).forceApprove(handlerAddr, 0);
+                    emit AllocationSkipped(handlerAddr, allocationAmount);
+                }
             } else if (!accepts && allocationAmount > 0) {
                 // Refused: leave this portion idle on the handler contract.
                 // (remainingAmount was already decremented for non-last handlers;
