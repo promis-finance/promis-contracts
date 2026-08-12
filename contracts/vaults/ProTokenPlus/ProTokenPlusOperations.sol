@@ -88,7 +88,7 @@ contract ProTokenPlusOperations is
         uint256 _amount
     ) external override onlyDelegatecall {
         if (_caller != msg.sender) revert CallerMismatch();
-        if (_amount == 0) revert IProTokenPlus.ZeroAmount();
+        if (_amount == 0) revert IProTokenPlus.ZeroAmount();        
 
         IERC20(proUSD).safeTransferFrom(
             msg.sender,
@@ -97,6 +97,9 @@ contract ProTokenPlusOperations is
         );
 
         ProTokenPlusTypes.TierConfig storage tier = tiers[_tierID];
+        if (!tier.isActive) revert IProTokenPlus.TierError(_tierID);
+        if (!tier.isDepositable) revert IProTokenPlus.TierError(_tierID);
+        
         uint256 _min = _convertToBase(_amount);
         if (tier.minDeposit > 0 && _min < tier.minDeposit) revert IProTokenPlus.BelowMinDeposit(_min, tier.minDeposit);
         
