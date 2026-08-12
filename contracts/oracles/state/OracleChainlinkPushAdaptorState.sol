@@ -24,5 +24,5 @@ abstract contract OracleChainlinkPushAdaptorState {
      * This gap ensures that the storage layout remains compatible
      * when adding new state variables in future versions
      */
-    uint256[50] internal __gap;
+    uint256[46] internal __gap;
 }
