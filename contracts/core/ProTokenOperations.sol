@@ -76,6 +76,9 @@ contract ProTokenOperations is
 
         minDepositBase = 100e18;
         minWithdrawBase = 100e18;
+
+        emit MinDepositBaseSet(0, minDepositBase);
+        emit MinWithdrawBaseSet(0, minWithdrawBase);
     }
 
     /// @notice Restricts access to the admin.

@@ -82,6 +82,10 @@ contract ProToken is
         priceUpdateCooldown = DEFAULT_PRICE_UPDATE_COOLDOWN;
 
         lastPriceUpdateAt = block.timestamp;
+
+        emit MinterSet(address(0), _minter);
+        emit USDPriceSet(0, DEFAULT_USD_PRICE);
+        emit PriceUpdateCooldownChanged(0, DEFAULT_PRICE_UPDATE_COOLDOWN);
     }
 
     /// @notice Restricts access to the admin.

@@ -78,6 +78,9 @@ contract StrategyVault is
         // Seed the yield ratchet so the first settlement banks only appreciation. 
         // Tolerant of disabled price at deploy time: first live settlement seeds it.
         lastPrice = _tryGetPrice();
+
+        emit ProTokenPlusSet(address(0), _proTokenPlus);
+        emit ProTokenOperationsSet(address(0), proTokenInfo.proTokenOperations);
     }
 
     // ================================================

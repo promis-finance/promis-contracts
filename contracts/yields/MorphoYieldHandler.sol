@@ -86,6 +86,10 @@ contract MorphoYieldHandler is
         operationsContract = _operationsContract;
         morphoCoreContract = _morphoCoreContract;
         morphoMarketParams = _morphoMarketParams;
+
+        emit OperationsContractUpdated(_operationsContract);
+        emit SetMorphoCoreContract(_morphoCoreContract);
+        emit MorphoMarketParamsUpdated(_morphoMarketParams);
     }
 
     modifier onlyAdmin() {

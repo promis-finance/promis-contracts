@@ -86,7 +86,19 @@ contract ProTokenPlus is
             if (tierId != FLOOR_TIER_ID && _tierConfigs[i].duration == 0) revert InvalidDuration();
             tierIds.push(tierId);
             tiers[tierId] = _tierConfigs[i];
+            emit TierAdded(
+                tierId,
+                _tierConfigs[i].name,
+                _tierConfigs[i].apr,
+                _tierConfigs[i].duration,
+                _tierConfigs[i].minDeposit,
+                _tierConfigs[i].isDepositable
+            );
         }
+
+        emit ProUSDSet(address(0), _proUSD);
+        emit UnbondingPeriodSet(0, unbondingPeriod);
+        
     }
 
     // ================================================

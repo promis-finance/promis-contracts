@@ -119,6 +119,9 @@ contract AaveV3YieldHandler is
         aavePool = _aavePool;
         yieldAsset = _yieldAsset;
         aToken = _aToken;
+
+        emit OperationsContractUpdated(_operationsContract);
+        emit ATokenUpdated(_aToken);
     }
 
     modifier onlyAdmin() {

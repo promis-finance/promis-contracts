@@ -46,6 +46,10 @@ contract ProTokenSettings is
         admin = _admin;
         operator = _operator;
         priceOperator = _priceOperator;
+
+        emit AdminAccepted(address(0), _admin);
+        emit OperatorSet(address(0), _operator);
+        emit PriceOperatorSet(address(0), _priceOperator);
     }
 
     modifier onlyAdmin() {

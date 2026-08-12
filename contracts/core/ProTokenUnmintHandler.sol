@@ -47,6 +47,8 @@ contract ProTokenUnmintHandler is
 
         proTokenSettings = _proTokenSettings;
         unmintBatchDuration = _unmintBatchDuration;
+
+        emit UnmintBatchDurationUpdated(0, _unmintBatchDuration);
     }
 
     modifier onlyAdmin() {
