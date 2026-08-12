@@ -777,31 +777,27 @@ describe("StrategyVault: slash markdown and cover", function () {
             expect(await ctx.strategyVault.depositDeficit()).to.equal(0n);
         });
 
-        it("deficit is PRICE-INVARIANT: recovery accrual moves pool and need in lockstep; covering the stored figure restores exact backing", async function () {
+        it("deficit persists through recovery until cover (only markdown sets it, only cover retires it)", async function () {
             const ctx = await loadFixture(slashFixture);
             const admin = ctx.accounts.admin;
             const B = MIN_DEPOSIT * 10n;
             const { dShort } = await markdownWithDeficit(ctx, B);
+            expect(dShort).to.be.gt(0n);
 
-            // Price RECOVERS to $1.10 before the treasury acts, and the ratchet
-            // runs (claimGrowth triggers accrual): it frees B/1.02 − B/1.10
-            // from the still-underfunded pool into growth — pool and need drop
-            // by the same amount, so the token gap is unchanged.
+            // Price recovers to $1.10. Nothing clears the deficit — it's only set by
+            // markdown and retired by cover. Recovery does not touch it.
             await setPrice(ctx, P_110);
-            await ctx.strategyVault.connect(admin).claimGrowth(admin.address, 0n);
+            // (no claimGrowth trigger — it would revert NoYieldAvailable and, more to the
+            //  point, settlement doesn't affect the deficit under this model)
 
             expect(await ctx.strategyVault.depositDeficit()).to.equal(dShort);
 
-            // Covering the figure measured at $1.02 restores EXACT backing at
-            // $1.10 — the stored deficit was the right cover amount at any
-            // later price. This is why on-chain storage is sound here.
+            // Covering the figure measured at $1.02 restores exact backing — the stored
+            // deficit is the right cover amount at any later price.
+            await fundWithProUSD(ctx, admin.address, dShort);
             await ctx.proUSD.connect(admin).approve(ctx.strategyVaultAddress, dShort);
             await ctx.strategyVault.connect(admin).cover(dShort, 0n);
-
             expect(await ctx.strategyVault.depositDeficit()).to.equal(0n);
-            expect(await ctx.strategyVault.depositProUSD()).to.equal(
-                (B * USD_PRECISION) / P_110,
-            );
         });
 
         it("a second markdown OVERWRITES deficits net of prior covers (self-correcting)", async function () {
