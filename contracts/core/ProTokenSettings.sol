@@ -113,6 +113,15 @@ contract ProTokenSettings is
     }
 
     /// @inheritdoc IProTokenSettings
+    function setBridgeAdmin(
+        address _bridgeAdmin
+    ) external override onlyAdmin {
+        address previousBridgeAdmin = bridgeAdmin;
+        bridgeAdmin = _bridgeAdmin;
+        emit BridgeAdminSet(previousBridgeAdmin, _bridgeAdmin);
+    }
+
+    /// @inheritdoc IProTokenSettings
     function setProToken(address _proToken) external override onlyAdmin {
         if (_proToken == address(0)) revert ZeroAddress();
         address previousProToken = proToken;
@@ -421,6 +430,11 @@ contract ProTokenSettings is
     /// @inheritdoc IProTokenSettings
     function getStrategist() external view override returns (address) {
         return strategist;
+    }
+
+    /// @inheritdoc IProTokenSettings
+    function getBridgeAdmin() external view override returns (address) {
+        return bridgeAdmin;
     }
 
     /// @inheritdoc IProTokenSettings

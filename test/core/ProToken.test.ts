@@ -770,7 +770,7 @@ describe("ProToken", function () {
                 proToken.connect(accounts.minter).mint(accounts.user1.address, HUNDRED_TOKENS)
             )
                 .to.emit(proToken, EVENTS.Minted)
-                .withArgs(accounts.user1.address, HUNDRED_TOKENS);
+                .withArgs(accounts.user1.address, HUNDRED_TOKENS, accounts.minter.address);
         });
         it("emits Transfer(0, to, amount) (OZ ERC20)", async function () {
             const { proToken, accounts } = await loadFixture(proTokenFixture);
@@ -785,7 +785,7 @@ describe("ProToken", function () {
             const tx = proToken.connect(accounts.minter).mint(accounts.user1.address, ONE_TOKEN);
             await expect(tx)
                 .to.emit(proToken, EVENTS.Minted)
-                .withArgs(accounts.user1.address, ONE_TOKEN);
+                .withArgs(accounts.user1.address, ONE_TOKEN, accounts.minter.address);
             await expect(tx)
                 .to.emit(proToken, EVENTS.Transfer)
                 .withArgs(ZERO_ADDRESS, accounts.user1.address, ONE_TOKEN);
@@ -865,7 +865,7 @@ describe("ProToken", function () {
                 proToken.connect(accounts.minter).burn(accounts.user1.address, ONE_TOKEN)
             )
                 .to.emit(proToken, EVENTS.Burned)
-                .withArgs(accounts.user1.address, ONE_TOKEN);
+                .withArgs(accounts.user1.address, ONE_TOKEN, accounts.minter.address);
         });
         it("emits Transfer(from, 0, amount) (OZ ERC20)", async function () {
             const { proToken, accounts } = await loadFixture(proTokenFundedFixture);
@@ -880,7 +880,7 @@ describe("ProToken", function () {
             const tx = proToken.connect(accounts.minter).burn(accounts.user1.address, ONE_TOKEN);
             await expect(tx)
                 .to.emit(proToken, EVENTS.Burned)
-                .withArgs(accounts.user1.address, ONE_TOKEN);
+                .withArgs(accounts.user1.address, ONE_TOKEN, accounts.minter.address);
             await expect(tx)
                 .to.emit(proToken, EVENTS.Transfer)
                 .withArgs(accounts.user1.address, ZERO_ADDRESS, ONE_TOKEN);

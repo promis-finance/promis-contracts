@@ -53,6 +53,13 @@ interface IProToken {
     /// @param newMinter The address of the new minter
     function setMinter(address newMinter) external;
 
+    /// @notice Sets a new bridge minter address
+    /// @dev This function can only be called by the admin. 
+    ///      Adds or removes a bridge minter (CCIP token pool). 
+    /// @param bridgeMinter The bridge contract address
+    /// @param allowed True to authorize, false to revoke
+    function setBridgeMinter(address bridgeMinter, bool allowed) external;
+
     // ================================================
     // ================ View functions ================
     // ================================================
@@ -67,6 +74,15 @@ interface IProToken {
     /// @notice Returns the address of the current proTokenSettings
     function getProTokenSettings() external view returns (address);
 
+    /// @notice CCIP admin resolution hook
+    /// @dev Chainlink's RegistryModuleOwnerCustom.registerAdminViaGetCCIPAdmin
+    ///      calls this to identify who may claim the Token Admin Registry role
+    ///      for this token.
+    function getCCIPAdmin() external view returns (address);
+    
+    /// @notice Returns true if bridge "account" is approved minter
+    function isBridgeMinter(address account) external view returns (bool);
+
     // ================================================
     // ==================== Events ====================
     // ================================================
@@ -78,12 +94,14 @@ interface IProToken {
     /// @notice Emitted when tokens are minted
     /// @param to The address that received the minted tokens
     /// @param amount The amount of tokens that were minted
-    event Minted(address indexed to, uint256 amount);
+    /// @param minter The address which called mint
+    event Minted(address indexed to, uint256 amount, address indexed minter);
 
     /// @notice Emitted when tokens are burned
     /// @param from The address from which the tokens were burned
     /// @param amount The amount of tokens that were burned
-    event Burned(address indexed from, uint256 amount);
+    /// @param burner The address which called burn
+    event Burned(address indexed from, uint256 amount, address indexed burner);
 
     /// @notice Emitted when the USD price is set by Admin
     /// @param prevPrice The old USD price in 18 decimal format

@@ -61,6 +61,12 @@ interface IProTokenSettings {
     function setStrategist(address _strategist) external;
 
     /**
+     * @notice Updates the bridgeAdmin address that ccip backend reads for token registration
+     * @param _bridgeAdmin Address of the new bridgeAdmin
+     */
+    function setBridgeAdmin(address _bridgeAdmin) external;
+
+    /**
      * @notice Sets the address of the pro token operations contract
      * @dev The operations contract handles core functionality like minting and unminting of pro tokens
      * @param _proTokenOperations Address of the pro token operations contract
@@ -192,6 +198,15 @@ interface IProTokenSettings {
         external 
         view 
         returns (address strategist);
+
+    /**
+     * @notice Returns the current bridgeAdmin address for CCIP
+     * @return bridgeAdmin Address of the current bridgeAdmin
+     */
+    function getBridgeAdmin() 
+        external 
+        view 
+        returns (address bridgeAdmin);
 
     /**
      * @notice Returns the configured unmint y assets address
@@ -392,6 +407,16 @@ interface IProTokenSettings {
     event StrategistSet(
         address previousStrategsit, 
         address newStrategist
+    );
+
+    /**
+     * @notice Emitted when the bridgeAdmin address is changed
+     * @param previousBridgeAdmin Address of the previous bridgeAdmin
+     * @param newBridgeAdmin Address of the new bridgeAdmin
+     */
+    event BridgeAdminSet(
+        address previousBridgeAdmin, 
+        address newBridgeAdmin
     );
 
     /**

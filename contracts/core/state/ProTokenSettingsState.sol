@@ -26,6 +26,9 @@ abstract contract ProTokenSettingsState {
     /// @notice Strategist role authorized to borrow from / repay the StrategyVault.
     address internal strategist;
 
+    /// @notice CCIP admin resolution hook target.
+    address internal bridgeAdmin;
+
     /// @notice proUSD token contract.
     address internal proToken;
 
@@ -57,5 +60,5 @@ abstract contract ProTokenSettingsState {
     address internal priceOperator;
 
     /// @notice Reserved storage for future upgrades.
-    uint256[34] internal __gap;
+    uint256[33] internal __gap;
 }

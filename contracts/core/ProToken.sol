@@ -11,8 +11,9 @@ import "./interfaces/IVersioned.sol";
 /**
  * @title ProToken
  * @author Promis Team
- * @notice ERC20 (18 decimals, EIP-2612 permit) mintable and burnable only by an
- *         authorized minter contract (ProTokenOperations).
+ * @notice ERC20 (18 decimals, EIP-2612 permit) mintable and burnable by the
+ *         primary minter (ProTokenOperations) and by admin-approved bridge
+ *         minters (cross-chain token pools / adapters).
  */
 contract ProToken is
     ERC20Upgradeable,
@@ -51,10 +52,16 @@ contract ProToken is
     /// @notice Timestamp of the last operator price update (updateUSDPrice).
     uint256 private lastPriceUpdateAt;
 
+    /// @notice Authorized to mint/burn (cross-chain).
+    mapping(address => bool) private bridgeMinters;
+
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }
+
+    /// @notice Emitted when a bridge minter is added or removed.
+    event BridgeMinterSet(address indexed bridgeMinter, bool allowed);
 
     /**
      * @notice Initializes the token with name, symbol, settings, and minter.
@@ -104,9 +111,9 @@ contract ProToken is
         _;
     }
 
-    /// @notice Restricts access to the minter.
+    /// @notice Restricts access to the primary minter or an approved bridge minter.
     modifier onlyMinter() {
-        if (msg.sender != minter) revert NotMinter();
+        if (msg.sender != minter && !bridgeMinters[msg.sender]) revert NotMinter();
         _;
     }
 
@@ -119,6 +126,15 @@ contract ProToken is
         minter = newMinter;
 
         emit MinterSet(oldMinter, newMinter);
+    }
+
+    /// @inheritdoc IProToken
+    function setBridgeMinter(address bridgeMinter, bool allowed) external override onlyAdmin {
+        if (bridgeMinter == address(0)) revert ZeroAddress();
+
+        bridgeMinters[bridgeMinter] = allowed;
+
+        emit BridgeMinterSet(bridgeMinter, allowed);
     }
 
     /// @inheritdoc IProToken
@@ -181,7 +197,7 @@ contract ProToken is
         if (amount == 0) revert InvalidAmount();
         _mint(to, amount);
 
-        emit Minted(to, amount);
+        emit Minted(to, amount, msg.sender);
     }
 
     /// @inheritdoc IProToken
@@ -189,7 +205,7 @@ contract ProToken is
         if (amount == 0) revert InvalidAmount();
         _burn(from, amount);
 
-        emit Burned(from, amount);
+        emit Burned(from, amount, msg.sender);
     }
 
     /// @inheritdoc IProToken
@@ -216,6 +232,15 @@ contract ProToken is
     /// @inheritdoc IProToken
     function getProTokenSettings() external view override returns (address) {
         return proTokenSettings;
+    }
+
+    /// @inheritdoc IProToken
+    function getCCIPAdmin() external view override returns (address) {
+        return IProTokenSettings(proTokenSettings).getBridgeAdmin();
+    }
+    /// @inheritdoc IProToken
+    function isBridgeMinter(address account) external view override returns (bool) {
+        return bridgeMinters[account];
     }
 
     function _authorizeUpgrade(
