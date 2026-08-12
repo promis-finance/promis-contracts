@@ -272,6 +272,50 @@ contract YAssetOperationsHandler is
         emit YAssetsPaidOut(to, amount);
         return amount;
     }
+
+    /// @inheritdoc IYAssetOperationsHandler
+    function recordProtocolFee(address _yAsset, uint256 _amount) external {
+        IProTokenSettings s = IProTokenSettings(proTokenSettings);
+        if (msg.sender != s.getProTokenInfo().proTokenOperations)
+            revert Unauthorized();
+        if (_yAsset != yAsset) revert HandlerAssetMismatch(_yAsset);
+        accruedProtocolFees[_yAsset] += _amount;
+        emit UnmintFeeAccrued(_yAsset, _amount);
+    }
+
+    function collectFee(address _yAsset, address _to, uint256 _amount) external {
+        if (msg.sender != IProTokenSettings(proTokenSettings).getAdmin()) revert Unauthorized();
+        if (_to == address(0)) revert ZeroAddress();
+        if (_yAsset != yAsset) revert HandlerAssetMismatch(_yAsset);
+
+        uint256 owed = accruedProtocolFees[_yAsset];
+        if (_amount == 0) _amount = owed;
+        if (_amount > owed) revert CollectExceedsAccrued(_amount, owed);
+
+        accruedProtocolFees[_yAsset] = owed - _amount;
+
+        // Source the fee: idle first, then venues (accrual model — the fee tokens
+        // are wherever our yAsset happens to sit, not necessarily idle).
+        uint256 idle = IERC20(_yAsset).balanceOf(address(this));
+        if (idle < _amount) {
+            uint256 remaining = _amount - idle;
+            for (uint256 i = 0; i < protocolHandlers.length && remaining > 0; i++) {
+                address h = protocolHandlers[i].handlerContract;
+                if (h == address(0) || h.code.length == 0) continue;
+                uint256 bal;
+                try IYieldProtocolHandler(h).getBalance() returns (uint256 b) { bal = b; } catch { continue; }
+                if (bal == 0) continue;
+                uint256 toPull = bal >= remaining ? remaining : bal;
+                try IYieldProtocolHandler(h).withdrawYieldAsset(toPull) returns (uint256 got) {
+                    remaining -= got > toPull ? toPull : got;
+                } catch {}
+            }
+            if (remaining > 0) revert InsufficientBalance(); // total holdings < ledger: shouldn't happen unless a loss occurred
+        }
+
+        IERC20(_yAsset).safeTransfer(_to, _amount);
+        emit ProtocolFeesCollected(_yAsset, _to, _amount);
+    }
     
     // ================================================
     // =========== Admin External Functions ===========
@@ -415,6 +459,9 @@ contract YAssetOperationsHandler is
 
         // add the unallocated balance
         totalAmount += IERC20(yAsset).balanceOf(address(this));
+
+        uint256 fees = accruedProtocolFees[yAsset];
+        totalAmount = totalAmount > fees ? totalAmount - fees : 0;
 
         return (yAsset, totalAmount);
     }

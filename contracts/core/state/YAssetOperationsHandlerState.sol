@@ -22,6 +22,9 @@ abstract contract YAssetOperationsHandlerState {
     /// @notice Whether an address is a registered protocol handler.
     mapping(address => bool) internal isProtocolHandler;
 
+    /// @notice The amount of unmint fee accrued per yAsset.
+    mapping(address => uint256) public accruedProtocolFees;
+
     /// @notice Reserved storage for future upgrades.
-    uint256[46] internal __gap;
+    uint256[45] internal __gap;
 }

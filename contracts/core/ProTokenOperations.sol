@@ -397,7 +397,7 @@ contract ProTokenOperations is
             // Reduce the amount to unmint by the fee amount
             yAssetToReceiveAmount -= feeAmount;
 
-            // Fee stays on the protocol (protocol keeps it)
+            IYAssetOperationsHandler(yAssetSettings.settings.yOperationsHandler).recordProtocolFee(_yAsset, feeAmount);
         }
 
         if (yAssetToReceiveAmount < _minAmountOut)

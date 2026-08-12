@@ -62,6 +62,16 @@ interface IYAssetOperationsHandler {
         uint256 amount
     ) external returns (uint256 sent);
 
+    /**
+     * @notice Records protocol owned fee during unminting.
+     * @dev Callable by ProTokenOperations.
+     * @param yAsset Address of yAsset
+     * @param amount Amount of yAsset as fee
+     */
+    function recordProtocolFee(
+        address yAsset, 
+        uint256 amount
+    ) external;
     // ================================================
     // =========== Admin External Functions ===========
     // ================================================
@@ -180,6 +190,23 @@ interface IYAssetOperationsHandler {
         uint256 amount
     );
 
+    /**
+     * @notice Emitted to track unmint fee accrual.
+     */
+    event UnmintFeeAccrued(
+        address indexed yAsset, 
+        uint256 indexed feeAmount
+    );
+
+    /**
+     * @notice Emitted when protocol unmint fees are collected. 
+     */
+    event ProtocolFeesCollected(
+        address yAsset, 
+        address to, 
+        uint256 amount
+    );
+
     // ================================================
     // ==================== Errors ====================
     // ================================================
@@ -198,4 +225,5 @@ interface IYAssetOperationsHandler {
     error Paused();
     error HandlerAssetMismatch(address handler);
     error DuplicateHandler();
+    error CollectExceedsAccrued(uint256 amount, uint256 owed);
 }
