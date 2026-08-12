@@ -517,8 +517,9 @@ contract ProTokenPlusOperations is
         _detectDuplicatedPositionIds(positionIds);
 
         // Calculate total amount and validate all positions
-        uint256 totalAmount = 0;
-        uint8 tierId = 0;
+        uint256 totalAmount;
+        uint256 totalRewards;
+        uint8 tierId;
 
         for (uint256 i = 0; i < positionIds.length; i++) {
             uint256 posId = positionIds[i];
@@ -547,7 +548,8 @@ contract ProTokenPlusOperations is
                 );
             }
 
-            totalAmount += position.amount + position.lockedRewards;
+            totalAmount += position.amount;
+            totalRewards += position.lockedRewards;
         }
 
         // Deactivate all source positions
@@ -570,7 +572,7 @@ contract ProTokenPlusOperations is
             activeFromTimestamp: uint64(block.timestamp),
             activeToTimestamp: 0,
             status: ProTokenPlusTypes.PositionStatus.ACTIVE,
-            lockedRewards: 0
+            lockedRewards: totalRewards
         });
 
         totalDepositsBase += totalAmount;

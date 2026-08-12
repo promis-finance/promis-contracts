@@ -2449,7 +2449,8 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             const SECONDS_PER_YEAR_BN = 365n * ONE_DAY_BN;
             const rewardsPerPosition = (HUNDRED_TOKENS * QUARTERLY_APR * QUARTERLY_DURATION) / (SECONDS_PER_YEAR_BN * USD_PRECISION);
             const expectedMergedAmount = 2n * (HUNDRED_TOKENS + rewardsPerPosition);
-            expect(merged[0].amount).to.equal(expectedMergedAmount);
+            expect(merged[0].amount).to.equal(2n * HUNDRED_TOKENS);
+            expect(merged[0].lockedRewards).to.equal(2n * rewardsPerPosition);
             expect(merged[0].lockedTierId).to.equal(QUARTERLY_TIER_ID);
             expect(merged[0].state).to.equal(POSITION_STATE_UNLOCKED);
 
@@ -2767,7 +2768,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
     //
     // Invariant: totalDepositsBase == Σ active position.amount (principal-base),
     // across every mutating path. Rewards are promoted into principal on relock
-    // and merge, and must be reflected; withdrawal removes principal at INITIATE
+    // and not merge, and must be reflected; withdrawal removes principal at INITIATE
     // (not at completeWithdraw). Each test asserts the invariant after the op.
     // =======================================================================
     describe("totalDepositsBase invariant", function () {
@@ -2914,7 +2915,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             await ctx.proTokenPlus.connect(user).unlockedMerge([id1, id2]);
 
             // Merged position's principal = sum of both totals (rewards promoted).
-            expect(await ctx.proTokenPlus.totalDepositsBase()).to.equal(base1 + base2);
+            expect(await ctx.proTokenPlus.totalDepositsBase()).to.equal(HUNDRED_TOKENS * 2n);
             await expectDepositsBaseInvariant(ctx, [user]);
         });
 
@@ -3127,7 +3128,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             expect(await ctx.proTokenPlus.totalDepositsBase()).to.be.gt(await ctx.proTokenPlus.depositCap());
         });
 
-        it("merge can push totalDepositsBase above the cap (promoted rewards bypass the cap by design)", async function () {
+        it("merge does not inflate the ledger", async function () {
             const ctx = await loadFixture(proTokenPlusFixture);
             const user = ctx.accounts.user1;
 
@@ -3144,8 +3145,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             await ctx.proTokenPlus.connect(user).unlockedMerge([id1, id2]);
 
             // Merged principal includes promoted rewards → above the cap, by design.
-            expect(await ctx.proTokenPlus.totalDepositsBase()).to.equal(base1 + base2);
-            expect(await ctx.proTokenPlus.totalDepositsBase()).to.be.gt(cap);
+            expect(await ctx.proTokenPlus.totalDepositsBase()).to.equal(HUNDRED_TOKENS * 2n);
         });
 
         it("lowering the cap below current deposits blocks new deposits but does not claw back", async function () {
