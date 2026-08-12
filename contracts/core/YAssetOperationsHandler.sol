@@ -234,7 +234,7 @@ contract YAssetOperationsHandler is
         // 1. Use unallocated reserve held directly on this contract.
         uint256 unallocated = IERC20(yAsset).balanceOf(address(this));
         if (unallocated >= remaining) {
-            IERC20(yAsset).safeTransfer(to, amount);
+            _deliverOrThrow(to, amount);
             emit YAssetsPaidOut(to, amount);
             return amount;
         }
@@ -268,9 +268,22 @@ contract YAssetOperationsHandler is
         if (remaining > 0) revert InsufficientBalance();
         
         // 3. Everything is now on this contract; send the full amount out.
-        IERC20(yAsset).safeTransfer(to, amount);
+        _deliverOrThrow(to, amount);
         emit YAssetsPaidOut(to, amount);
         return amount;
+    }
+
+    /// @dev Non-reverting transfer that throws a DISTINCT error on delivery
+    ///      failure (e.g. blocklisted recipient), so callers can tell a
+    ///      delivery failure apart from a sourcing/liquidity failure.
+    function _deliverOrThrow(address to, uint256 amount) internal {
+        (bool ok, bytes memory ret) = yAsset.call(
+            abi.encodeWithSelector(IERC20.transfer.selector, to, amount)
+        );
+        // ERC20: success == call didn't revert AND (no return data OR returned true)
+        if (!ok || (ret.length != 0 && !abi.decode(ret, (bool)))) {
+            revert PayoutDeliveryFailed(to, amount);
+        }
     }
 
     /// @inheritdoc IYAssetOperationsHandler

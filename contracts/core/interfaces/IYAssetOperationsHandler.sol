@@ -221,6 +221,7 @@ interface IYAssetOperationsHandler {
     error ZeroAmount();
     error NoHandlers();
     error AssetNotReceived();
+    error PayoutDeliveryFailed(address to, uint256 amount);
     error Unauthorized();
     error InvalidAllocation();
     error ProtocolHandlerNotFound();

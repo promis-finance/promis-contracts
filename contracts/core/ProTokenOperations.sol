@@ -415,8 +415,12 @@ contract ProTokenOperations is
         if (backlog == 0 && yOps.previewPayOut(yAssetToReceiveAmount)) {
             try yOps.payOut(_recipient, yAssetToReceiveAmount) {
                 paidInstant = true;
-            } catch {
-                // fall through to the queue path below
+            } catch (bytes memory reason) {
+                if (reason.length >= 4 && bytes4(reason) == IYAssetOperationsHandler.PayoutDeliveryFailed.selector) {
+                    assembly { revert(add(reason, 0x20), mload(reason)) }
+                    // else: sourcing/liquidity failure (InsufficientBalance, unreadable venue,
+                    // or dataless revert) → fall through to the queue as designed.
+                }
             }
         }
 
