@@ -255,28 +255,6 @@ interface IProTokenPlus {
         uint64 expiry
     );
 
-    /// @notice Emitted when funds are merged into an existing position (locked merge)
-    /// @param user Address of the position owner
-    /// @param newPositionId New position created with combined amount
-    /// @param oldPositionId Original position that was merged (now LOCKED_MERGED)
-    /// @param oldPositionAmount Amount that was in the old position
-    /// @param addedAmount Amount added to the position
-    /// @param totalAmount Total amount in the new position
-    /// @param lockedTierId Tier the position is locked in
-    /// @param oldPositionLockExpiry Lock expiry of the old position (for tier time calculation)
-    /// @param newExpiry New lock expiry (reset to full duration)
-    event PositionMerged(
-        address indexed user,
-        uint256 indexed newPositionId,
-        uint256 oldPositionId,
-        uint256 oldPositionAmount,
-        uint256 addedAmount,
-        uint256 totalAmount,
-        uint8 lockedTierId,
-        uint64 oldPositionLockExpiry,
-        uint64 newExpiry
-    );
-
     /// @notice Emitted when unbonding is initiated
     /// @param user Address initiating unbonding
     /// @param unbondingIndex Index of the unbonding request

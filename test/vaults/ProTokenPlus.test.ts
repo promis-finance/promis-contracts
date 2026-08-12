@@ -373,8 +373,8 @@ const POSITION_STATE_UNLOCKED = 1n;
 
 const POSITION_STATUS_ACTIVE = 0n;
 const POSITION_STATUS_WITHDRAWN = 1n;
-const POSITION_STATUS_UNLOCKED_MERGED = 3n;
-const POSITION_STATUS_RELOCATED = 4n;
+const POSITION_STATUS_UNLOCKED_MERGED = 2n;
+const POSITION_STATUS_RELOCATED = 3n;
 
 // ---------------------------------------------------------------------------
 // Flow helpers

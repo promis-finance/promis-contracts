@@ -23,7 +23,6 @@ library ProTokenPlusTypes {
     enum PositionStatus {
         ACTIVE,
         WITHDRAWN,
-        LOCKED_MERGED,
         UNLOCKED_MERGED,
         RELOCATED
     }
