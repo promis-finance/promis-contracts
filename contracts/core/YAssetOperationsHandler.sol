@@ -387,9 +387,11 @@ contract YAssetOperationsHandler is
         uint256 len = protocolHandlers.length;
         for (uint256 i = 0; i < len; ) {
             address h = protocolHandlers[i].handlerContract;
-            if (h != address(0)) {
-                available += IYieldProtocolHandler(h).getBalance();
-                if (available >= amount) return true;
+            if (h != address(0) && h.code.length != 0) {
+                try IYieldProtocolHandler(h).getBalance() returns (uint256 balance) {
+                    available += balance;
+                    if (available >= amount) return true;
+                } catch {}
             }
             unchecked { ++i; }
         }
