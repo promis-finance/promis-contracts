@@ -631,8 +631,10 @@ contract ProTokenOperations is
                 yAssetSettings.settings.priceSettings,
                 yAssetSettings.settings.decimals
             );
-            if (rep.assetAmountUSD < min)
-                revert BelowMinDeposit(rep.assetAmountUSD, min);
+            uint256 cap = yAssetSettings.settings.priceSettings.usdCap;
+            uint256 cappedUSD = rep.assetUSD > cap ? cap : rep.assetUSD;
+            uint256 cappedAmountUSD = (_amount * cappedUSD) / (10 ** yAssetSettings.settings.decimals);
+            if (cappedAmountUSD < min) revert BelowMinDeposit(cappedAmountUSD, min);
         }
     }
 

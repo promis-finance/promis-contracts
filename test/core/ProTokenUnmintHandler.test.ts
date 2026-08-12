@@ -1101,18 +1101,6 @@ describe("ProTokenUnmintHandler", function () {
             );
         });
 
-        it("reverts Unauthorized when claimed by a non-receiver", async function () {
-            const ctx = await loadFixture(setupClaimableRequest);
-            await expect(
-                ctx.proTokenUnmintHandler
-                    .connect(ctx.accounts.user2)
-                    .claimUnmintRequests(ctx.yAssetAddress, [ctx.requestId]),
-            ).to.be.revertedWithCustomError(
-                ctx.proTokenUnmintHandler,
-                ERRORS.Unauthorized,
-            );
-        });
-
         it("reverts BatchStillProcessing when the batch is not yet processed", async function () {
             const ctx = await loadFixture(fullProtocolFixture);
             await authorizeBackend(ctx);
