@@ -672,7 +672,10 @@ contract ProTokenOperations is
             settings.yAssetSettings.settings.priceSettings,
             settings.yAssetSettings.settings.decimals
         );
-        ctx.yAssetUSD = yAssetUsdRepresentation.assetUSD;
+        uint256 cap = settings.yAssetSettings.settings.priceSettings.usdCap;
+        ctx.yAssetUSD = yAssetUsdRepresentation.assetUSD > cap
+            ? cap
+            : yAssetUsdRepresentation.assetUSD;
         ctx.proTokenUSD = proTokenUsdRepresentation.assetUSD;
     }
 
