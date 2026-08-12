@@ -80,6 +80,8 @@ contract ProToken is
         proTokenSettings = _proTokenSettings;
         usdPrice = DEFAULT_USD_PRICE;
         priceUpdateCooldown = DEFAULT_PRICE_UPDATE_COOLDOWN;
+
+        lastPriceUpdateAt = block.timestamp;
     }
 
     /// @notice Restricts access to the admin.
@@ -121,6 +123,8 @@ contract ProToken is
 
         uint256 old = usdPrice;
         usdPrice = _price;
+
+        lastPriceUpdateAt = block.timestamp;
 
         emit USDPriceSet(old, _price);
     }
