@@ -247,18 +247,31 @@ contract ProTokenSettings is
 
         // Check yOperationsHandler has 0 balance
         // Use try-catch to handle misconfigured yOperationsHandler addresses
-        // If the call fails (e.g., invalid contract, EOA, or non-ERC20), assume balance is 0
+        // If the call fails (e.g., invalid contract, or non-ERC20), assume balance is 0
         address yOpsHandler = yAssetSettings[_yAsset].yOperationsHandler;
         uint256 totalAmount = 0;
-        try IYAssetOperationsHandler(yOpsHandler).getYAssetInfo() returns (
-            address,
-            uint256 amount
-        ) {
-            totalAmount = amount;
-        } catch {
-            // If call fails, totalAmount remains 0 - safe to remove misconfigured yAsset
+        bool balanceVerified;
+        if (yOpsHandler.code.length > 0) {
+            try IYAssetOperationsHandler(yOpsHandler).getYAssetInfo() returns (
+                address,
+                uint256 amount
+            ) {
+                totalAmount = amount;
+                balanceVerified = true;
+            } catch {
+                // If call fails, totalAmount remains 0 - safe to remove misconfigured yAsset
+                // Emit YAssetRemovedUnverified to mark this case
+            }
         }
+
         if (totalAmount > 0) revert YOperationsHandlerInUseBalanceNotZero();
+
+        if (!balanceVerified) {
+            // Deliberate policy: an unreadable handler must not deadlock removal of its
+            // own asset. The backing (if any) remains on the handler contract,
+            // recoverable via its admin paths.
+            emit YAssetRemovedUnverified(_yAsset, yOpsHandler);
+        }
 
         // Remove from EnumerableSet
         yAssets.remove(_yAsset);

@@ -335,6 +335,13 @@ interface IProTokenSettings {
     event YAssetRemoved(address indexed yAsset);
 
     /**
+     * @notice Emitted when a y asset is removed from the registry with positive handler balance
+     * @param yAsset Address of the y asset that was removed
+     * @param yOpsHandler Address of the operations handler for yAsset
+     */
+    event YAssetRemovedUnverified(address indexed yAsset, address indexed yOpsHandler);
+
+    /**
      * @notice Emitted when the unmint y asset is changed
      * @param oldAssets Address of the previous unmint y asset
      * @param newAssets Address of the new unmint y asset
