@@ -328,7 +328,23 @@ contract YAssetOperationsHandler is
         uint256 oldLen = protocolHandlers.length;
         for (uint256 i = 0; i < oldLen; ) {
             address old = protocolHandlers[i].handlerContract;
-            if (old != address(0)) isProtocolHandler[old] = false;
+            if (old != address(0)) {
+                isProtocolHandler[old] = false;
+
+                uint256 residual;
+                bool verified;
+                if (old.code.length > 0) {
+                    try IYieldProtocolHandler(old).getBalance() returns (uint256 bal) {
+                        residual = bal;
+                        verified = true;
+                    } catch {}
+                }
+                if (!verified || residual > 0) {
+                    // Funds may remain on the deregistered handler. They are untouched and
+                    // recoverable: re-register the handler, or use its own admin paths.
+                    emit ProtocolHandlerRemovedWithBalance(old, residual, verified);
+                }
+            }
             unchecked { ++i; }
         }
         delete protocolHandlers;

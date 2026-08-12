@@ -135,6 +135,10 @@ interface IYAssetOperationsHandler {
     // ================================================
     // ==================== Events ====================
     // ================================================
+    /**
+     * @notice Emitted after a handler with balance is replaced
+     */
+    event ProtocolHandlerRemovedWithBalance(address old, uint256 residual, bool verified);
 
     /**
      * @notice Emitted after the handler configuration is updated.
