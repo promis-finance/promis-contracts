@@ -366,7 +366,9 @@ contract StrategyVault is
         
         // Derive the USD worth of what was minted, at the current (just-settled) price.
         // This is the reserve obligation the minted tokens cover.
-        uint256 usdAmount = (proUSDMinted * lastPrice) / USD_PRECISION;
+        uint256 live = _tryGetPrice();
+        if (live == 0) revert PriceUnavailable();
+        uint256 usdAmount = (proUSDMinted * live) / USD_PRECISION;
 
         // Feed the SEGREGATED reserve, not backing. withdrawBase tracks the USD target;
         // withdrawProUSD holds the minted tokens earmarked for user exits.
