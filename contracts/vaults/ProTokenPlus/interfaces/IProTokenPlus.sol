@@ -404,6 +404,9 @@ interface IProTokenPlus {
     /// @param tierId The invalid tier ID
     error TierError(uint8 tierId);
 
+    /// @notice Thrown when tier name is empty
+    error EmptyTierName();
+
     /// @notice Thrown when position doesn't exist
     /// @param positionId The non-existent position ID
     error PositionNotFound(uint256 positionId);

@@ -83,6 +83,7 @@ contract ProTokenPlus is
         // Add tiers
         for (uint8 i = 0; i < _tierIds.length; i++) {
             uint8 tierId = _tierIds[i];
+            if (bytes(_tierConfigs[i].name).length == 0) revert EmptyTierName();
             if (tierId != FLOOR_TIER_ID && _tierConfigs[i].duration == 0) revert InvalidDuration();
             tierIds.push(tierId);
             tiers[tierId] = _tierConfigs[i];
@@ -296,7 +297,7 @@ contract ProTokenPlus is
         if (tiers[tierId].isActive || bytes(tiers[tierId].name).length > 0) {
             revert TierError(tierId);
         }
-
+        if (bytes(config.name).length == 0) revert EmptyTierName(); 
         if (tierId != FLOOR_TIER_ID && config.duration == 0) revert InvalidDuration();
 
         tierIds.push(tierId);
