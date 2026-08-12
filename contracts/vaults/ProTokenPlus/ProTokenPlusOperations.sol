@@ -352,7 +352,7 @@ contract ProTokenPlusOperations is
 
             if (!request.isActive)
                 revert IProTokenPlus.UnbondingNotFound(unbondingIndex);
-            if (block.timestamp < request.unbondingEnd) {
+            if (unbondingPeriod != 0 && block.timestamp < request.unbondingEnd) {
                 revert IProTokenPlus.UnbondingNotComplete(request.unbondingEnd);
             }
 
