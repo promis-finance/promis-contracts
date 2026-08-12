@@ -581,18 +581,6 @@ describe("YAssetOperationsHandler", function () {
                 .withArgs(ZERO_ADDRESS, ctx.accounts.admin.address, TEN_TOKENS);
         });
 
-        it("reverts ZeroAmount on zero amount", async function () {
-            const ctx = await loadFixture(setupFundedHandler);
-            await expect(
-                ctx.yAssetOperationsHandler
-                    .connect(ctx.accounts.admin)
-                    .withdrawalYieldAssets(ctx.handlerAddr, 0n),
-            ).to.be.revertedWithCustomError(
-                ctx.yAssetOperationsHandler,
-                ERRORS.ZeroAmount,
-            );
-        });
-
         it("reverts Unauthorized when called by random caller", async function () {
             const ctx = await loadFixture(setupFundedHandler);
             await expect(
@@ -754,21 +742,6 @@ describe("YAssetOperationsHandler", function () {
             ).to.be.revertedWithCustomError(
                 ctx.yAssetOperationsHandler,
                 ERRORS.Unauthorized,
-            );
-        });
-
-        it("reverts ZeroAmount when any amount is zero", async function () {
-            const ctx = await loadFixture(setupTwoFundedHandlers);
-            await expect(
-                ctx.yAssetOperationsHandler
-                    .connect(ctx.accounts.admin)
-                    .withdrawalYieldAssetsMultiple(
-                        [ctx.h1Addr, ctx.h2Addr],
-                        [TEN_TOKENS, 0n],
-                    ),
-            ).to.be.revertedWithCustomError(
-                ctx.yAssetOperationsHandler,
-                ERRORS.ZeroAmount,
             );
         });
 

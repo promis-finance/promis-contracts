@@ -116,7 +116,7 @@ contract YAssetOperationsHandler is
         address _handler,
         uint256 _amount
     ) external whenNotPaused {
-        if (_amount == 0) revert ZeroAmount();
+        if (_amount == 0 && _handler == address(0)) revert ZeroAmount();
 
         // Check what is the caller
         // External Business, operator and admin can ask yield Operations to withdrawal assets and transfer them to themselves
@@ -148,7 +148,7 @@ contract YAssetOperationsHandler is
             actualAmount = IYieldProtocolHandler(_handler).withdrawYieldAsset(
                 _amount
             );
-            if (actualAmount < _amount) revert WithdrawFailed();
+            if (_amount != 0 && actualAmount < _amount) revert WithdrawFailed();
         }
 
         IERC20(yAsset).safeTransfer(msg.sender, actualAmount);
@@ -184,7 +184,7 @@ contract YAssetOperationsHandler is
             address handler = _handlers[i];
             uint256 amount = _amounts[i];
 
-            if (amount == 0) revert ZeroAmount();
+            if (amount == 0 && handler == address(0)) revert ZeroAmount();
 
             uint256 actualAmount;
 
@@ -202,7 +202,7 @@ contract YAssetOperationsHandler is
 
                 actualAmount = IYieldProtocolHandler(handler)
                     .withdrawYieldAsset(amount);
-                if (actualAmount < amount) revert WithdrawFailed();
+                if (amount != 0 && actualAmount < amount) revert WithdrawFailed();
             }
 
             totalWithdrawn += actualAmount;

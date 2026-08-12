@@ -8,11 +8,18 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {
     IMorpho,
-    MarketParams
+    MarketParams,
+    Id
 } from "@morpho-org/morpho-blue/src/interfaces/IMorpho.sol";
 import {
     MorphoBalancesLib
 } from "@morpho-org/morpho-blue/src/libraries/periphery/MorphoBalancesLib.sol";
+import {
+    MorphoLib
+} from "@morpho-org/morpho-blue/src/libraries/periphery/MorphoLib.sol";
+import {
+    MarketParamsLib
+} from "@morpho-org/morpho-blue/src/libraries/MarketParamsLib.sol";
 import "./interfaces/IYieldProtocolHandler.sol";
 import "./state/MorphoYieldHandlerState.sol";
 import "../core/interfaces/IProTokenSettings.sol";
@@ -34,6 +41,8 @@ contract MorphoYieldHandler is
     IVersioned
 {
     using MorphoBalancesLib for IMorpho;
+    using MorphoLib for IMorpho;
+    using MarketParamsLib for MarketParams;
     using SafeERC20 for IERC20;
 
     /// @notice Implementation version (v1.0.0)
@@ -149,23 +158,38 @@ contract MorphoYieldHandler is
     ) external whenNotPaused nonReentrant returns (uint256) {
         if (msg.sender != operationsContract) revert Unauthorized();
 
-        uint256 amountToWithdrawAssets = amount == 0
-            ? this.getBalance()
-            : amount;
-        if (amountToWithdrawAssets == 0) revert InsufficientBalance();
-        if (this.getBalance() < amountToWithdrawAssets)
-            revert InsufficientBalance();
+        uint256 assetsWithdrawn;
 
-        // Always withdraw to the operations contract (msg.sender)
-        (uint256 assetsWithdrawn, ) = IMorpho(morphoCoreContract).withdraw(
-            morphoMarketParams,
-            amountToWithdrawAssets,
-            0,
-            address(this),
-            msg.sender
-        );
+        if (amount == 0) {
+            // Full drain: withdraw by SHARES. getBalance() rounds shares->assets
+            // DOWN, and an asset-denominated withdraw of that figure burns shares
+            // rounded UP — leaving share dust that keeps getBalance() > 0
+            Id id = morphoMarketParams.id();
+            uint256 shares = IMorpho(morphoCoreContract).supplyShares(
+                id,
+                address(this)
+            );
+            if (shares == 0) revert InsufficientBalance();
 
-        if (assetsWithdrawn < amountToWithdrawAssets) revert WithdrawFailed();
+            (assetsWithdrawn, ) = IMorpho(morphoCoreContract).withdraw(
+                morphoMarketParams,
+                0,          // assets = 0
+                shares,     // burn the whole position
+                address(this),
+                msg.sender
+            );
+        } else {
+            if (this.getBalance() < amount) revert InsufficientBalance();
+
+            (assetsWithdrawn, ) = IMorpho(morphoCoreContract).withdraw(
+                morphoMarketParams,
+                amount,
+                0,
+                address(this),
+                msg.sender
+            );
+            if (assetsWithdrawn < amount) revert WithdrawFailed();
+        }
 
         emit YieldAssetWithdrawn(amount, assetsWithdrawn, block.timestamp);
         return assetsWithdrawn;
