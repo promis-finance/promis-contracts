@@ -244,7 +244,7 @@ interface IProTokenPlus {
     /// @notice Emitted when a new position is created
     /// @param user Address of the position owner
     /// @param positionId Unique position identifier
-    /// @param amount Amount of ProUSD locked
+    /// @param amount Amount of ProUSD worth locked
     /// @param lockedTierId Tier the position was created in
     /// @param expiry Timestamp when lock expires
     event PositionCreated(

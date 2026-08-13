@@ -520,7 +520,6 @@ contract ProTokenPlusOperations is
 
         // Deactivate all source positions
         for (uint256 i = 0; i < positionIds.length; i++) {
-            totalDepositsBase -= positions[positionIds[i]].amount;
             _deactivatePosition(
                 positionIds[i],
                 ProTokenPlusTypes.PositionStatus.UNLOCKED_MERGED
@@ -541,8 +540,6 @@ contract ProTokenPlusOperations is
             lockedRewards: totalRewards
         });
 
-        totalDepositsBase += totalAmount;
-
         // Add to active positions list
         _addToActivePositions(caller, newPositionId);
 
@@ -556,7 +553,7 @@ contract ProTokenPlusOperations is
             caller,
             newPositionId,
             mergedIds,
-            totalAmount,
+            totalAmount + totalRewards,
             tierId
         );
 
