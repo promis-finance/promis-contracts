@@ -170,6 +170,25 @@
       {
         "indexed": false,
         "internalType": "address",
+        "name": "previousBridgeAdmin",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "newBridgeAdmin",
+        "type": "address"
+      }
+    ],
+    "name": "BridgeAdminSet",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "address",
         "name": "previousExternalBusiness",
         "type": "address"
       },
@@ -382,6 +401,25 @@
         "internalType": "address",
         "name": "yAsset",
         "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "yOpsHandler",
+        "type": "address"
+      }
+    ],
+    "name": "YAssetRemovedUnverified",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "yAsset",
+        "type": "address"
       }
     ],
     "name": "YAssetSet",
@@ -401,6 +439,19 @@
       {
         "internalType": "address",
         "name": "admin",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "getBridgeAdmin",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "bridgeAdmin",
         "type": "address"
       }
     ],
@@ -701,6 +752,19 @@
       }
     ],
     "name": "setAuthority",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_bridgeAdmin",
+        "type": "address"
+      }
+    ],
+    "name": "setBridgeAdmin",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"

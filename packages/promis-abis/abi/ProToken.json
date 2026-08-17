@@ -209,6 +209,11 @@
   },
   {
     "inputs": [],
+    "name": "InvalidRampPeriod",
+    "type": "error"
+  },
+  {
+    "inputs": [],
     "name": "NotAdmin",
     "type": "error"
   },
@@ -256,6 +261,22 @@
   {
     "inputs": [],
     "name": "SameAddress",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint64",
+        "name": "incomingStartTime",
+        "type": "uint64"
+      },
+      {
+        "internalType": "uint64",
+        "name": "currentStartTime",
+        "type": "uint64"
+      }
+    ],
+    "name": "StaleSegment",
     "type": "error"
   },
   {
@@ -331,6 +352,25 @@
       {
         "indexed": true,
         "internalType": "address",
+        "name": "bridgeMinter",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "bool",
+        "name": "allowed",
+        "type": "bool"
+      }
+    ],
+    "name": "BridgeMinterSet",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
         "name": "from",
         "type": "address"
       },
@@ -339,6 +379,12 @@
         "internalType": "uint256",
         "name": "amount",
         "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "burner",
+        "type": "address"
       }
     ],
     "name": "Burned",
@@ -377,6 +423,12 @@
         "internalType": "uint256",
         "name": "amount",
         "type": "uint256"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "minter",
+        "type": "address"
       }
     ],
     "name": "Minted",
@@ -549,6 +601,32 @@
         "internalType": "bytes32",
         "name": "",
         "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "MAX_RAMP_PERIOD",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "MIN_RAMP_PERIOD",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
       }
     ],
     "stateMutability": "view",
@@ -736,6 +814,19 @@
   },
   {
     "inputs": [],
+    "name": "getCCIPAdmin",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
     "name": "getLastPriceUpdateAt",
     "outputs": [
       {
@@ -800,6 +891,34 @@
     "type": "function"
   },
   {
+    "inputs": [],
+    "name": "getUSDPriceSegment",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "_inPrice",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "_futurePrice",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint64",
+        "name": "_startTime",
+        "type": "uint64"
+      },
+      {
+        "internalType": "uint64",
+        "name": "_period",
+        "type": "uint64"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
     "inputs": [
       {
         "internalType": "string",
@@ -825,6 +944,25 @@
     "name": "initialize",
     "outputs": [],
     "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "account",
+        "type": "address"
+      }
+    ],
+    "name": "isBridgeMinter",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
     "type": "function"
   },
   {
@@ -931,6 +1069,24 @@
       }
     ],
     "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "bridgeMinter",
+        "type": "address"
+      },
+      {
+        "internalType": "bool",
+        "name": "allowed",
+        "type": "bool"
+      }
+    ],
+    "name": "setBridgeMinter",
+    "outputs": [],
+    "stateMutability": "nonpayable",
     "type": "function"
   },
   {
@@ -1070,6 +1226,16 @@
         "internalType": "uint256",
         "name": "_price",
         "type": "uint256"
+      },
+      {
+        "internalType": "uint64",
+        "name": "_startTime",
+        "type": "uint64"
+      },
+      {
+        "internalType": "uint64",
+        "name": "_period",
+        "type": "uint64"
       }
     ],
     "name": "updateUSDPrice",
