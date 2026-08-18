@@ -196,8 +196,9 @@ contract ProTokenUnmintHandler is
                 amount, existingRequest.totalAmount, block.timestamp
             );
         } else {
-            uint256 newRequestId;
-            unchecked { newRequestId = ++nextUnmintRequestIdPerYAsset[yAsset]; }
+            uint256 id = nextUnmintRequestIdPerYAsset[yAsset];
+            if (id == 0) id = 1;
+            uint256 newRequestId = id;
             ProTokenUnmintHandlerTypes.UnmintRequest storage newRequest =
                 unmintRequestsPerYAsset[yAsset][newRequestId];
             newRequest.yAsset = yAsset;
@@ -210,7 +211,7 @@ contract ProTokenUnmintHandler is
             // claimed/claimTimestamp default false/0 — no need to set.
 
             unclaimedUnmintBatchesPerReceiver[receiver][yAsset].add(curBatchId);
-            unchecked { ++nextUnmintRequestIdPerYAsset[yAsset]; }
+            unchecked { nextUnmintRequestIdPerYAsset[yAsset] = id + 1; }
             unmintRequestIdForReceiverInBatch[yAsset][curBatchId][receiver] = newRequestId;
             requestId = newRequestId;
 
