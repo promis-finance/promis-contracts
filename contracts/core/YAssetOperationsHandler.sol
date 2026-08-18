@@ -363,8 +363,9 @@ contract YAssetOperationsHandler is
     /// @inheritdoc IYAssetOperationsHandler
     function setYProtocolHandlers(
         address[] memory _handlers,
-        uint256[] memory _allocations
-    ) external onlyAdmin {
+        uint256[] memory _allocations,
+        bool _forced
+    ) external override onlyAdmin {
         if (_handlers.length != _allocations.length)
             revert ArrayLengthMismatch();
         if (_handlers.length == 0) revert NoHandlers();
@@ -384,21 +385,25 @@ contract YAssetOperationsHandler is
         for (uint256 i = 0; i < oldLen; ) {
             address old = protocolHandlers[i].handlerContract;
             if (old != address(0)) {
+                // Only enforce the balance policy on handlers genuinely leaving the set.
+                if (!_isInNewList(old, _handlers)) {
+                    (uint256 bal, bool verified) = _tryGetHandlerBalance(old);
+                    if (verified) {
+                        // Known balance: a funded handler must be drained first (it is still
+                        // registered here, so withdrawalYieldAssets works). forced does NOT
+                        // override a confirmed balance.
+                        if (bal > 0) revert HandlerHasBalance(old, bal);
+                        // verified zero → clean removal, no event.
+                    } else {
+                        // Unreadable: drain-first may be impossible (handler broken), so a
+                        // forced detachment is the escape hatch; recover via the handler's
+                        // own emergency path afterward.
+                        if (!_forced) revert HandlerBalanceUnverifiable(old);
+                        emit HandlerDetachedUnverified(old);
+                    }
+                }
+                // Handlers still in the new list: not a removal — no check, no event.
                 isProtocolHandler[old] = false;
-
-                uint256 residual;
-                bool verified;
-                if (old.code.length > 0) {
-                    try IYieldProtocolHandler(old).getBalance() returns (uint256 bal) {
-                        residual = bal;
-                        verified = true;
-                    } catch {}
-                }
-                if (!verified || residual > 0) {
-                    // Funds may remain on the deregistered handler. They are untouched and
-                    // recoverable: re-register the handler, or use its own admin paths.
-                    emit ProtocolHandlerRemovedWithBalance(old, residual, verified);
-                }
             }
             unchecked { ++i; }
         }
@@ -424,6 +429,30 @@ contract YAssetOperationsHandler is
         }
 
         emit YProtocolHandlersSet(_handlers, _allocations);
+    }
+
+    /// @dev True if `handler` appears in the new `handlers` array.
+    function _isInNewList(address handler, address[] memory handlers)
+        internal pure returns (bool)
+    {
+        for (uint256 i = 0; i < handlers.length; ) {
+            if (handlers[i] == handler) return true;
+            unchecked { ++i; }
+        }
+        return false;
+    }
+
+    /// @dev Reads a handler's balance without reverting; (balance, verified).
+    ///      verified == false when the handler has no code or getBalance() reverts.
+    function _tryGetHandlerBalance(address handler)
+        internal view returns (uint256 bal, bool verified)
+    {
+        if (handler.code.length == 0) return (0, false);
+        try IYieldProtocolHandler(handler).getBalance() returns (uint256 b) {
+            return (b, true);
+        } catch {
+            return (0, false);
+        }
     }
 
     // ================================================

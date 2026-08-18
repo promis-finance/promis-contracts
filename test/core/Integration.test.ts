@@ -819,7 +819,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
             const handlerAddr = await handler.getAddress();
             await ctx.yAssetOperationsHandler
                 .connect(ctx.accounts.admin)
-                .setYProtocolHandlers([handlerAddr], [ALLOCATION_PRECISION_BPS]);
+                .setYProtocolHandlers([handlerAddr], [ALLOCATION_PRECISION_BPS], false);
 
             return { ...ctx, yieldHandler: handler, yieldHandlerAddr: handlerAddr };
         }
@@ -977,6 +977,7 @@ describe("Integration: ProToken protocol end-to-end", function () {
                 .setYProtocolHandlers(
                     [h1Addr, h2Addr],
                     [FIFTY_PERCENT_BPS, FIFTY_PERCENT_BPS],
+                    false
                 );
 
             const alice = ctx.accounts.user1;

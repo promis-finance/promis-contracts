@@ -80,10 +80,12 @@ interface IYAssetOperationsHandler {
      * @notice Configures the set of protocol handlers that receive allocations.
      * @param _handlers Handler contract addresses
      * @param _allocations Allocation basis points applied to `_amount` in {allocateYAssets}.
+     * @param _forced Allows removal of handlers with bad balance of query.
      */
     function setYProtocolHandlers(
         address[] memory _handlers,
-        uint256[] memory _allocations
+        uint256[] memory _allocations,
+        bool _forced
     ) external;
 
     // ================================================
@@ -212,6 +214,13 @@ interface IYAssetOperationsHandler {
         uint256 amount
     );
 
+    /**
+     * @notice Emitted when a handler is detached with bad balance of query. 
+    */
+    event HandlerDetachedUnverified(
+        address indexed handler
+    );
+
     // ================================================
     // ==================== Errors ====================
     // ================================================
@@ -224,6 +233,8 @@ interface IYAssetOperationsHandler {
     error PayoutDeliveryFailed(address to, uint256 amount);
     error Unauthorized();
     error InvalidAllocation();
+    error HandlerHasBalance(address handler, uint256 balance);
+    error HandlerBalanceUnverifiable(address handler);
     error ProtocolHandlerNotFound();
     error InsufficientBalance();
     error ArrayLengthMismatch();

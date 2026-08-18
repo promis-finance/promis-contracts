@@ -1118,7 +1118,7 @@ describe("ProTokenSettings", function () {
             ).deploy(yAssetAddress);
             await handler
                 .connect(accounts.admin)
-                .setYProtocolHandlers([await venue.getAddress()], [10000n]);
+                .setYProtocolHandlers([await venue.getAddress()], [10000n], false);
             await venue.setBroken(true); // getYAssetInfo() will now revert → unverifiable
 
             // default fails closed
@@ -1148,7 +1148,7 @@ describe("ProTokenSettings", function () {
             ).deploy(yAssetAddress);
             await handler
                 .connect(accounts.admin)
-                .setYProtocolHandlers([await venue.getAddress()], [10000n]);
+                .setYProtocolHandlers([await venue.getAddress()], [10000n], false);
             await venue.setBroken(true); // getYAssetInfo() reverts → unverifiable
 
             // forced override removes and marks it unverified

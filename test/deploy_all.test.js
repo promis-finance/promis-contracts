@@ -169,7 +169,7 @@ describe("Deployment", function () {
         await (await proTokenPlus.setOperationsHandler(await proTokenPlusOperations.getAddress())).wait();
 
         // Yield routing + oracle mappings.
-        await (await yAssetOperationsHandler.setYProtocolHandlers([await aaveV3YieldHandler.getAddress()], [10000])).wait(); // 100%
+        await (await yAssetOperationsHandler.setYProtocolHandlers([await aaveV3YieldHandler.getAddress()], [10000], false)).wait(); // 100%
         await (await oracleAdaptor.setAssetToPushOracleMappings([await yAsset1.getAddress()], [await yAsset1Aggregator.getAddress()], [8])).wait();
 
         // Aave mock plumbing + yield pre-fund.
