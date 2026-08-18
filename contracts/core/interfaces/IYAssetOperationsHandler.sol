@@ -88,6 +88,15 @@ interface IYAssetOperationsHandler {
         bool _forced
     ) external;
 
+    
+    /**
+     * @notice Collects accrued unmint fees.
+     * @param _yAsset The address of yAsset
+     * @param _to The receiver of the accrued yAsset fees
+     * @param _amount The amount of the accrued fees. 0 means all.
+     */
+    function collectFee(address _yAsset, address _to, uint256 _amount) external;
+
     // ================================================
     // ================ View functions ================
     // ================================================
@@ -143,6 +152,7 @@ interface IYAssetOperationsHandler {
      * @notice Returns the address of the y asset managed by this contract instance.
      */
     function getYAsset() external view returns (address);
+
 
     // ================================================
     // ==================== Events ====================

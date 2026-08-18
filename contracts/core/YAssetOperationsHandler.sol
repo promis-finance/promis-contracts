@@ -294,6 +294,7 @@ contract YAssetOperationsHandler is
         emit UnmintFeeAccrued(_yAsset, _amount);
     }
 
+    /// @inheritdoc IYAssetOperationsHandler
     function collectFee(address _yAsset, address _to, uint256 _amount) external {
         if (msg.sender != IProTokenSettings(proTokenSettings).getAdmin()) revert Unauthorized();
         if (_to == address(0)) revert ZeroAddress();
