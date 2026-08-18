@@ -136,8 +136,9 @@ interface IProTokenSettings {
      *      and its yOperationsHandler must have 0 balance (no funds allocated).
      *      This is used to clean up y assets that are no longer used or were mistakenly configured.
      * @param _yAsset Address of the y asset to remove
+     * @param _forced A forced flag that lets admin remove yAssets with failed balance query
      */
-    function removeYAsset(address _yAsset) external;
+    function removeYAsset(address _yAsset, bool _forced) external;
 
     /**
      * @notice Sets status of an authority address for proofs acceptance
@@ -350,7 +351,7 @@ interface IProTokenSettings {
     event YAssetRemoved(address indexed yAsset);
 
     /**
-     * @notice Emitted when a y asset is removed from the registry with positive handler balance
+     * @notice Emitted when a y asset is removed from the registry with unverified handler balance
      * @param yAsset Address of the y asset that was removed
      * @param yOpsHandler Address of the operations handler for yAsset
      */
@@ -457,5 +458,6 @@ interface IProTokenSettings {
     error YAssetNotFound(address yAsset);
     error YAssetInUseForUnmint(address yAsset);
     error YOperationsHandlerInUseBalanceNotZero();
+    error BalanceUnverifiable(address yAsset, address handler);
     error HandlerAssetMismatch();
 }

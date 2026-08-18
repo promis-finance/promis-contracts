@@ -1010,10 +1010,9 @@ describe("ProTokenSettings", function () {
     // removeYAsset
     // =======================================================================
     describe("removeYAsset()", function () {
-        it("admin can remove an unused yAsset with zero handler balance", async function () {
+        it("admin can remove an unused yAsset with verified zero handler balance", async function () {
             const { proTokenSettings, accounts, proTokenSettingsAddress } =
                 await loadFixture(proTokenSettingsFixture);
-
             const yAsset = await deployMintableERC20("Test", "T", DECIMALS_18);
             const yAssetAddress = await yAsset.getAddress();
             const yOpsHandler = await deployYAssetOperationsHandler(
@@ -1023,13 +1022,12 @@ describe("ProTokenSettings", function () {
             await proTokenSettings
                 .connect(accounts.admin)
                 .setYAsset(yAssetAddress, createDefaultYAssetSettings(await yOpsHandler.getAddress()));
-
+            // verified zero balance → forced flag irrelevant, remove with false
             await expect(
-                proTokenSettings.connect(accounts.admin).removeYAsset(yAssetAddress)
+                proTokenSettings.connect(accounts.admin).removeYAsset(yAssetAddress, false)
             )
                 .to.emit(proTokenSettings, EVENTS.YAssetRemoved)
                 .withArgs(yAssetAddress);
-
             await expect(
                 proTokenSettings.getYAssets([yAssetAddress])
             ).to.be.revertedWithCustomError(proTokenSettings, ERRORS.NoYAssetsFound);
@@ -1040,26 +1038,24 @@ describe("ProTokenSettings", function () {
                 proTokenSettingsFixture
             );
             await expect(
-                proTokenSettings.connect(accounts.admin).removeYAsset(getRandomAddress())
+                proTokenSettings.connect(accounts.admin).removeYAsset(getRandomAddress(), false)
             ).to.be.revertedWithCustomError(proTokenSettings, ERRORS.YAssetNotFound);
         });
 
         it("reverts when yAsset is in the unmintYAssets array", async function () {
             const { proTokenSettings, accounts, yAssetAddress } =
                 await loadFixture(fullProtocolFixture);
-
             await expect(
-                proTokenSettings.connect(accounts.admin).removeYAsset(yAssetAddress)
+                proTokenSettings.connect(accounts.admin).removeYAsset(yAssetAddress, false)
             ).to.be.revertedWithCustomError(
                 proTokenSettings,
                 ERRORS.YAssetInUseForUnmint
             );
         });
 
-        it("reverts when yOperationsHandler has non-zero balance", async function () {
+        it("reverts when yOperationsHandler has verified non-zero balance (forced=false)", async function () {
             const { proTokenSettings, accounts, proTokenSettingsAddress } =
                 await loadFixture(proTokenSettingsFixture);
-
             const yAsset = await deployMintableERC20("Test", "T", DECIMALS_18);
             const yAssetAddress = await yAsset.getAddress();
             const yOpsHandler = await deployYAssetOperationsHandler(
@@ -1070,46 +1066,108 @@ describe("ProTokenSettings", function () {
             await proTokenSettings
                 .connect(accounts.admin)
                 .setYAsset(yAssetAddress, createDefaultYAssetSettings(handlerAddr));
-
             await yAsset.mint(handlerAddr, ethers.parseUnits("100", 18));
-
             await expect(
-                proTokenSettings.connect(accounts.admin).removeYAsset(yAssetAddress)
+                proTokenSettings.connect(accounts.admin).removeYAsset(yAssetAddress, false)
             ).to.be.revertedWithCustomError(
                 proTokenSettings,
                 ERRORS.YOperationsHandlerInUseBalanceNotZero
             );
         });
 
-        it("succeeds when yOperationsHandler is misconfigured (try-catch fallback)", async function () {
+        it("reverts even with forced=true when balance is VERIFIED non-zero", async function () {
+            // forced only overrides the UNVERIFIABLE case — never a confirmed positive balance.
+            const { proTokenSettings, accounts, proTokenSettingsAddress } =
+                await loadFixture(proTokenSettingsFixture);
+            const yAsset = await deployMintableERC20("Test", "T", DECIMALS_18);
+            const yAssetAddress = await yAsset.getAddress();
+            const yOpsHandler = await deployYAssetOperationsHandler(
+                proTokenSettingsAddress,
+                yAssetAddress
+            );
+            const handlerAddr = await yOpsHandler.getAddress();
+            await proTokenSettings
+                .connect(accounts.admin)
+                .setYAsset(yAssetAddress, createDefaultYAssetSettings(handlerAddr));
+            await yAsset.mint(handlerAddr, ethers.parseUnits("100", 18));
+            await expect(
+                proTokenSettings.connect(accounts.admin).removeYAsset(yAssetAddress, true)
+            ).to.be.revertedWithCustomError(
+                proTokenSettings,
+                ERRORS.YOperationsHandlerInUseBalanceNotZero
+            );
+        });
+
+        it("reverts BalanceUnverifiable when handler read fails and forced=false", async function () {
             const { proTokenSettings, accounts } = await loadFixture(
                 proTokenSettingsFixture
             );
-
             const yAsset = await deployMintableERC20("Test", "T", DECIMALS_18);
             const yAssetAddress = await yAsset.getAddress();
-
-            const handler = await deployYAssetOperationsHandler(await proTokenSettings.getAddress(), yAssetAddress);       
+            const handler = await deployYAssetOperationsHandler(
+                await proTokenSettings.getAddress(),
+                yAssetAddress
+            );
             const settings = createDefaultYAssetSettings(await handler.getAddress());
             await proTokenSettings
                 .connect(accounts.admin)
                 .setYAsset(yAssetAddress, settings);
-            
-            const venue = await (await ethers.getContractFactory("MockYieldProtocolHandler")).deploy(yAssetAddress);                       // answers identity correctly
-            await handler.connect(accounts.admin).setYProtocolHandlers([await venue.getAddress()], [10000n]);  // passes the venue identity check
-            await venue.setBroken(true);
+
+            const venue = await (
+                await ethers.getContractFactory("MockYieldProtocolHandler")
+            ).deploy(yAssetAddress);
+            await handler
+                .connect(accounts.admin)
+                .setYProtocolHandlers([await venue.getAddress()], [10000n]);
+            await venue.setBroken(true); // getYAssetInfo() will now revert → unverifiable
+
+            // default fails closed
+            await expect(
+                proTokenSettings.connect(accounts.admin).removeYAsset(yAssetAddress, false)
+            ).to.be.revertedWithCustomError(proTokenSettings, ERRORS.BalanceUnverifiable);
+        });
+
+        it("removes with forced=true when handler read fails (emits YAssetRemovedUnverified)", async function () {
+            const { proTokenSettings, accounts } = await loadFixture(
+                proTokenSettingsFixture
+            );
+            const yAsset = await deployMintableERC20("Test", "T", DECIMALS_18);
+            const yAssetAddress = await yAsset.getAddress();
+            const handler = await deployYAssetOperationsHandler(
+                await proTokenSettings.getAddress(),
+                yAssetAddress
+            );
+            const handlerAddr = await handler.getAddress();
+            const settings = createDefaultYAssetSettings(handlerAddr);
+            await proTokenSettings
+                .connect(accounts.admin)
+                .setYAsset(yAssetAddress, settings);
+
+            const venue = await (
+                await ethers.getContractFactory("MockYieldProtocolHandler")
+            ).deploy(yAssetAddress);
+            await handler
+                .connect(accounts.admin)
+                .setYProtocolHandlers([await venue.getAddress()], [10000n]);
+            await venue.setBroken(true); // getYAssetInfo() reverts → unverifiable
+
+            // forced override removes and marks it unverified
+            await expect(
+                proTokenSettings.connect(accounts.admin).removeYAsset(yAssetAddress, true)
+            )
+                .to.emit(proTokenSettings, EVENTS.YAssetRemovedUnverified)
+                .withArgs(yAssetAddress, handlerAddr)
+                .and.to.emit(proTokenSettings, EVENTS.YAssetRemoved)
+                .withArgs(yAssetAddress);
 
             await expect(
-                proTokenSettings.connect(accounts.admin).removeYAsset(yAssetAddress)
-            )
-                .to.emit(proTokenSettings, EVENTS.YAssetRemoved)
-                .withArgs(yAssetAddress);
+                proTokenSettings.getYAssets([yAssetAddress])
+            ).to.be.revertedWithCustomError(proTokenSettings, ERRORS.NoYAssetsFound);
         });
 
         it("allows re-registering a yAsset after removal", async function () {
             const { proTokenSettings, accounts, proTokenSettingsAddress } =
                 await loadFixture(proTokenSettingsFixture);
-
             const yAsset = await deployMintableERC20("Test", "T", DECIMALS_18);
             const yAssetAddress = await yAsset.getAddress();
             const yOpsHandler = await deployYAssetOperationsHandler(
@@ -1117,13 +1175,10 @@ describe("ProTokenSettings", function () {
                 yAssetAddress
             );
             const settings = createDefaultYAssetSettings(await yOpsHandler.getAddress());
-
             await proTokenSettings
                 .connect(accounts.admin)
                 .setYAsset(yAssetAddress, settings);
-
-            await proTokenSettings.connect(accounts.admin).removeYAsset(yAssetAddress);
-
+            await proTokenSettings.connect(accounts.admin).removeYAsset(yAssetAddress, false);
             await expect(
                 proTokenSettings
                     .connect(accounts.admin)
@@ -1131,7 +1186,6 @@ describe("ProTokenSettings", function () {
             )
                 .to.emit(proTokenSettings, EVENTS.YAssetSet)
                 .withArgs(yAssetAddress);
-
             const result = await proTokenSettings.getYAssets([yAssetAddress]);
             expect(result.yAssets[0].yAsset).to.equal(yAssetAddress);
         });
@@ -1139,7 +1193,6 @@ describe("ProTokenSettings", function () {
         it("reverts when called by non-admin", async function () {
             const { proTokenSettings, accounts, proTokenSettingsAddress } =
                 await loadFixture(proTokenSettingsFixture);
-
             const yAsset = await deployMintableERC20("Test", "T", DECIMALS_18);
             const yAssetAddress = await yAsset.getAddress();
             const yOpsHandler = await deployYAssetOperationsHandler(
@@ -1149,13 +1202,11 @@ describe("ProTokenSettings", function () {
             await proTokenSettings
                 .connect(accounts.admin)
                 .setYAsset(yAssetAddress, createDefaultYAssetSettings(await yOpsHandler.getAddress()));
-
             await expect(
-                proTokenSettings.connect(accounts.operator).removeYAsset(yAssetAddress)
+                proTokenSettings.connect(accounts.operator).removeYAsset(yAssetAddress, false)
             ).to.be.revertedWithCustomError(proTokenSettings, ERRORS.NotAdmin);
-
             await expect(
-                proTokenSettings.connect(accounts.attacker).removeYAsset(yAssetAddress)
+                proTokenSettings.connect(accounts.attacker).removeYAsset(yAssetAddress, false)
             ).to.be.revertedWithCustomError(proTokenSettings, ERRORS.NotAdmin);
         });
     });

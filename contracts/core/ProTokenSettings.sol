@@ -248,7 +248,7 @@ contract ProTokenSettings is
     }
 
     /// @inheritdoc IProTokenSettings
-    function removeYAsset(address _yAsset) external override onlyAdmin {
+    function removeYAsset(address _yAsset, bool _forced) external override onlyAdmin {
         // Check yAsset exists in the set
         if (!yAssets.contains(_yAsset)) revert YAssetNotFound(_yAsset);
 
@@ -272,17 +272,17 @@ contract ProTokenSettings is
                 totalAmount = amount;
                 balanceVerified = true;
             } catch {
-                // If call fails, totalAmount remains 0 - safe to remove misconfigured yAsset
-                // Emit YAssetRemovedUnverified to mark this case
+                // balance unreadable → balanceVerified stays false
             }
         }
 
-        if (totalAmount > 0) revert YOperationsHandlerInUseBalanceNotZero();
-
-        if (!balanceVerified) {
-            // Deliberate policy: an unreadable handler must not deadlock removal of its
-            // own asset. The backing (if any) remains on the handler contract,
-            // recoverable via its admin paths.
+        if (balanceVerified) {
+            // Normal path: only remove on a confirmed zero balance.
+            if (totalAmount > 0) revert YOperationsHandlerInUseBalanceNotZero();
+        } else {
+            // Unverifiable path: default fails CLOSED. Removing an asset whose backing
+            // cannot be confirmed requires an explicit admin override.
+            if (!_forced) revert BalanceUnverifiable(_yAsset, yOpsHandler);
             emit YAssetRemovedUnverified(_yAsset, yOpsHandler);
         }
 
