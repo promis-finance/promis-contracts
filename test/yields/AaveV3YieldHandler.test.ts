@@ -274,6 +274,125 @@ describe("AaveV3YieldHandler", function () {
     });
 
     // ============================================
+    // acceptsAllocation() — deficit awareness
+    // ============================================
+    describe("acceptsAllocation() - deficit awareness", function () {
+        it("accepts when reserve is healthy (deficit == 0)", async function () {
+            const { aaveV3YieldHandler } = await loadFixture(aaveV3YieldHandlerFixture);
+            // default mock deficit is 0
+            expect(await aaveV3YieldHandler.acceptsAllocation()).to.equal(true);
+        });
+
+        it("fails closed when getReserveDeficit reverts (unreadable)", async function () {
+            const { aaveV3YieldHandler, mockAavePool, accounts } =
+                await loadFixture(aaveV3YieldHandlerFixture);
+            await mockAavePool.connect(accounts.admin).setDeficitReverts(true);
+            expect(await aaveV3YieldHandler.acceptsAllocation()).to.equal(false);
+        });
+
+        it("fails closed when aToken is unresolvable (stored zero AND pool returns zero)", async function () {
+            const { aaveV3YieldHandler, mockAavePool, accounts } =
+                await loadFixture(aaveV3YieldHandlerFixture);
+            // point the handler at a fresh asset the pool has NO reserve for,
+            // and clear the stored aToken
+            const orphanAsset = await deployMintableERC20("Orphan", "ORP", DECIMALS_18);
+            await aaveV3YieldHandler.connect(accounts.admin).setYieldAsset(await orphanAsset.getAddress());
+            await aaveV3YieldHandler.connect(accounts.admin).setAToken(ZERO_ADDRESS);
+            // stored aToken = 0, pool has no reserve for orphanAsset → getReserveAToken returns address(0)
+            expect(await aaveV3YieldHandler.acceptsAllocation()).to.equal(false);
+        });
+
+        it("fails closed when totalSupply reverts but deficit is nonzero", async function () {
+            const { aaveV3YieldHandler, mockAavePool, mockAToken, yAssetAddress, accounts } =
+                await loadFixture(aaveV3YieldHandlerFixture);
+            await mockAavePool.connect(accounts.admin).setReserveDeficit(yAssetAddress, TEN_TOKENS);
+            await mockAToken.setTotalSupplyReverts(true);
+            expect(await aaveV3YieldHandler.acceptsAllocation()).to.equal(false);
+        });
+
+        it("zero tolerance rejects any nonzero deficit (no bps rounding)", async function () {
+            const { aaveV3YieldHandler, mockAavePool, yAsset, yAssetAddress,
+                    yAssetOperationsHandler, yAssetOperationsHandlerAddress, accounts } =
+                await loadFixture(aaveV3YieldHandlerFixture);
+            // deposit so the aToken has a large totalSupply
+            await yAsset.mint(yAssetOperationsHandlerAddress, THOUSAND_TOKENS);
+            await yAssetOperationsHandler.connect(accounts.admin).distributeUnallocatedYAsset();
+            // set tolerance to 0
+            await aaveV3YieldHandler.connect(accounts.admin).setImpairmentTolerance(0);
+            // tiny deficit vs huge supply → (1 * 10000) / huge = 0 bps (would round to accept)
+            await mockAavePool.connect(accounts.admin).setReserveDeficit(yAssetAddress, 1n);
+            // must REFUSE despite the ratio rounding to 0
+            expect(await aaveV3YieldHandler.acceptsAllocation()).to.equal(false);
+        });
+
+        it("nonzero tolerance accepts deficit within ratio, refuses above", async function () {
+            const { aaveV3YieldHandler, mockAavePool, yAsset, yAssetAddress,
+                    yAssetOperationsHandler, yAssetOperationsHandlerAddress, accounts } =
+                await loadFixture(aaveV3YieldHandlerFixture);
+            // deposit 100 so aToken totalSupply == 100
+            await yAsset.mint(yAssetOperationsHandlerAddress, HUNDRED_TOKENS);
+            await yAssetOperationsHandler.connect(accounts.admin).distributeUnallocatedYAsset();
+            // tolerance = 100 bps (1%)
+            await aaveV3YieldHandler.connect(accounts.admin).setImpairmentTolerance(100);
+            // deficit = 1 token → 1/100 = 1% = 100 bps → exactly at tolerance → accept
+            await mockAavePool.connect(accounts.admin).setReserveDeficit(yAssetAddress, ONE_TOKEN);
+            expect(await aaveV3YieldHandler.acceptsAllocation()).to.equal(true);
+            // deficit = 2 tokens → 2% = 200 bps → over tolerance → refuse
+            await mockAavePool.connect(accounts.admin).setReserveDeficit(yAssetAddress, TEN_TOKENS / 5n); // 2 tokens
+            expect(await aaveV3YieldHandler.acceptsAllocation()).to.equal(false);
+        });
+    });
+
+    // ============================================
+    // getBalance() — impairment discount
+    // ============================================
+    describe("getBalance() - impairment discount", function () {
+        it("discounts nominal by deficit ratio when readable and impaired", async function () {
+            const { aaveV3YieldHandler, mockAavePool, yAsset, yAssetAddress,
+                    yAssetOperationsHandler, yAssetOperationsHandlerAddress, accounts } =
+                await loadFixture(aaveV3YieldHandlerFixture);
+            // deposit 100 → nominal 100, totalSupply 100
+            await yAsset.mint(yAssetOperationsHandlerAddress, HUNDRED_TOKENS);
+            await yAssetOperationsHandler.connect(accounts.admin).distributeUnallocatedYAsset();
+            // 10% deficit: 10 / 100
+            await mockAavePool.connect(accounts.admin).setReserveDeficit(yAssetAddress, TEN_TOKENS);
+            // impairedPortion = 100 * 10 / 100 = 10 → 90
+            expect(await aaveV3YieldHandler.getBalance()).to.equal(HUNDRED_TOKENS - TEN_TOKENS);
+        });
+
+        it("returns nominal (graceful) when deficit read is unreadable", async function () {
+            const { aaveV3YieldHandler, mockAavePool, yAsset,
+                    yAssetOperationsHandler, yAssetOperationsHandlerAddress, accounts } =
+                await loadFixture(aaveV3YieldHandlerFixture);
+            await yAsset.mint(yAssetOperationsHandlerAddress, HUNDRED_TOKENS);
+            await yAssetOperationsHandler.connect(accounts.admin).distributeUnallocatedYAsset();
+            await mockAavePool.connect(accounts.admin).setDeficitReverts(true);
+            // unreadable → nominal, not zero
+            expect(await aaveV3YieldHandler.getBalance()).to.equal(HUNDRED_TOKENS);
+        });
+
+        it("returns nominal when healthy (deficit == 0)", async function () {
+            const { aaveV3YieldHandler, yAsset,
+                    yAssetOperationsHandler, yAssetOperationsHandlerAddress, accounts } =
+                await loadFixture(aaveV3YieldHandlerFixture);
+            await yAsset.mint(yAssetOperationsHandlerAddress, HUNDRED_TOKENS);
+            await yAssetOperationsHandler.connect(accounts.admin).distributeUnallocatedYAsset();
+            expect(await aaveV3YieldHandler.getBalance()).to.equal(HUNDRED_TOKENS);
+        });
+
+        it("returns 0 when impairment fully wipes nominal", async function () {
+            const { aaveV3YieldHandler, mockAavePool, yAsset, yAssetAddress,
+                    yAssetOperationsHandler, yAssetOperationsHandlerAddress, accounts } =
+                await loadFixture(aaveV3YieldHandlerFixture);
+            await yAsset.mint(yAssetOperationsHandlerAddress, HUNDRED_TOKENS);
+            await yAssetOperationsHandler.connect(accounts.admin).distributeUnallocatedYAsset();
+            // 100% deficit: 100 / 100
+            await mockAavePool.connect(accounts.admin).setReserveDeficit(yAssetAddress, HUNDRED_TOKENS);
+            expect(await aaveV3YieldHandler.getBalance()).to.equal(0);
+        });
+    });
+
+    // ============================================
     // Admin Functions Tests
     // ============================================
     describe("Admin Functions", function () {

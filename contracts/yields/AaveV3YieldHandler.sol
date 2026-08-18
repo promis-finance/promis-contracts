@@ -345,8 +345,8 @@ contract AaveV3YieldHandler is
         uint256 nominal = IAToken(aTokenAddress).balanceOf(address(this));
         if (nominal == 0) return 0;
 
-        (uint256 deficit, uint256 totalReserveSupply) = _reserveImpairment();
-        if (deficit == 0 || totalReserveSupply == 0) return nominal; // healthy or unreadable
+        (uint256 deficit, uint256 totalReserveSupply, bool readable) = _reserveImpairment();
+        if (!readable || deficit == 0 || totalReserveSupply == 0) return nominal;
 
         uint256 impairedPortion = (nominal * deficit) / totalReserveSupply;
 
@@ -364,9 +364,11 @@ contract AaveV3YieldHandler is
 
     /// @inheritdoc IYieldProtocolHandler
     function acceptsAllocation() external override view returns (bool) {
-        (uint256 deficit, uint256 totalReserveSupply) = _reserveImpairment();
-        if (deficit == 0) return true;              // healthy or unreadable → accept
-        if (totalReserveSupply == 0) return false;  // degenerate: deficit but no supply → refuse
+        (uint256 deficit, uint256 totalReserveSupply, bool readable) = _reserveImpairment();
+        if (!readable) return false;                   // UNREADABLE → fail closed
+        if (deficit == 0) return true;                 // healthy → accept
+        if (totalReserveSupply == 0) return false;     // degenerate: deficit but no supply → refuse
+        if (impairmentToleranceBps == 0) return false; // zero tolerance → any deficit refused
         // impairment ratio in bps
         uint256 ratioBps = (deficit * 10000) / totalReserveSupply;
         return ratioBps <= impairmentToleranceBps;
@@ -383,26 +385,28 @@ contract AaveV3YieldHandler is
     function _reserveImpairment()
         internal
         view
-        returns (uint256 deficit, uint256 totalReserveSupply)
+        returns (uint256 deficit, uint256 totalReserveSupply, bool readable)
     {
         address pool = aavePool;
         address asset = yieldAsset;
         address aTokenAddress = _getATokenAddress();
-        if (aTokenAddress == address(0)) return (0, 0);
+        if (aTokenAddress == address(0)) return (0, 0, false);  // can't resolve → unreadable
 
         try IPool(pool).getReserveDeficit(asset) returns (uint256 d) {
             deficit = d;
         } catch {
-            return (0, 0); // deficit read unavailable → treat as healthy
+            return (0, 0, false);  // deficit read failed → UNREADABLE (not healthy)
         }
-        if (deficit == 0) return (0, 0);
+
+        if (deficit == 0) return (0, 0, true);  // genuinely healthy, readable
 
         try IAToken(aTokenAddress).totalSupply() returns (uint256 ts) {
             totalReserveSupply = ts;
         } catch {
-            return (0, 0); // can't size the impairment → treat as healthy, fall back to nominal
+            return (deficit, 0, false);  // known deficit but can't size → UNREADABLE
         }
-        // deficit > 0 but totalSupply == 0 is degenerate
+
+        readable = true;  // deficit > 0, supply read OK
     }
 
     /**

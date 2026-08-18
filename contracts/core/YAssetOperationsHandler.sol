@@ -525,9 +525,11 @@ contract YAssetOperationsHandler is
             // external deficit would otherwise revert the whole distribution
             // (and, upstream, block minting).
             bool accepts;
-            try IYieldProtocolHandler(handlerAddr).acceptsAllocation() returns (bool a) {
-                accepts = a;
-            } catch {} // unreadable probe → don't route new capital there
+            if (handlerAddr != address(0) && handlerAddr.code.length != 0) {
+                try IYieldProtocolHandler(handlerAddr).acceptsAllocation() returns (bool a) {
+                    accepts = a;
+                } catch {} // unreadable probe → don't route new capital there
+            }
 
             uint256 allocationAmount;
             if (i == len - 1) {
