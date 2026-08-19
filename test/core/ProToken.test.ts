@@ -11,6 +11,7 @@ import {
     VERSION_1_0_0,
     PROTOKEN_NAME,
     PROTOKEN_SYMBOL,
+    ONE_MINUTE,
     ERRORS,
     EVENTS,
 } from "../helpers/constants";
@@ -39,9 +40,17 @@ const PRICE_UPDATE_COOLDOWN = 23 * 60 * 60;
 //                    DECREASES (the slash-markdown escape hatch) and 0 (disable).
 //                    RESETS the operator cooldown clock: admin actions are
 //                    exempt from, but restart, the window (markdown-race fix).
-//   updateUSDPrice — PRICE-OPERATOR-only. Strictly increasing, step-size bounded
-//                    (stepSize 0 = unlimited), cannot run while price is disabled,
-//                    cooldown-gated against lastPriceUpdateAt.
+//   updateUSDPrice — PRICE-OPERATOR-only. Opens a linear ramp segment
+//                    (price, startTime, period) instead of jumping instantly —
+//                    see the "Linear price ramp" section below. The segment's
+//                    inPrice is NOT a parameter: it's set automatically to the
+//                    previous segment's futurePrice (see that function's
+//                    NatSpec). Strictly increasing vs. that stored futurePrice,
+//                    step-size bounded (stepSize 0 = unlimited), cannot run
+//                    while price is disabled, cooldown-gated against
+//                    lastPriceUpdateAt, period-bounded, and startTime must be
+//                    at or after the current segment's own END (its startTime
+//                    + period) — segments can never overlap (replay/overlap guard).
 //   setStepSize    — ADMIN-only. Bounds the priceOperator's per-update increment.
 //
 // COOLDOWN SEEDING: initialize() seeds lastPriceUpdateAt = block.timestamp, so
@@ -55,6 +64,45 @@ const PRICE_UPDATE_COOLDOWN = 23 * 60 * 60;
 // update must wait out the initial window.
 async function skipInitialCooldown() {
     await time.increase(PRICE_UPDATE_COOLDOWN + 1);
+}
+// updateUSDPrice's real signature is (price, startTime, period) — the oracle
+// computes one segment off-chain and submits identical calldata to every
+// chain; inPrice is derived on-chain from the previous segment's futurePrice,
+// so it's never passed explicitly (see the "Linear price ramp" /
+// "Multichain segment consistency" sections for tests of the curve itself
+// and of that cross-chain guarantee).
+//
+// Most tests in this file aren't testing the ramp *shape* — they're testing
+// access control, monotonicity, step size, and cooldown. Since inPrice is
+// forced to be the previous futurePrice, getUSDPrice() only reads the new
+// `price` once the segment has fully settled (block.timestamp >=
+// startTime + period); updateUSDPrice() below submits with a short default
+// period and then fast-forwards past it, so getUSDPrice() reads `price`
+// immediately after the call returns — preserving the pre-ramp "instant
+// update" test semantics for everything that isn't specifically about
+// interpolation. Pass settle:false, or call proToken.updateUSDPrice(...)
+// directly, to inspect the ramp mid-flight instead.
+async function buildUpdateArgs(price: bigint, opts: { period?: number } = {}) {
+    const startTime = (await time.latest()) + 1;
+    const period = opts.period ?? ONE_MINUTE; // MIN_RAMP_PERIOD
+    return { price, startTime, period };
+}
+// Convenience wrapper for call sites that don't need the raw args (e.g. for
+// .to.emit(...) assertions, build args separately and call updateUSDPrice directly).
+async function updateUSDPrice(
+    proToken: any,
+    operator: any,
+    price: bigint,
+    opts: { period?: number; settle?: boolean } = {}
+) {
+    const args = await buildUpdateArgs(price, opts);
+    const tx = await proToken.connect(operator).updateUSDPrice(
+        args.price, args.startTime, args.period
+    );
+    if (opts.settle !== false) {
+        await time.increaseTo(args.startTime + args.period);
+    }
+    return tx;
 }
 describe("ProToken", function () {
     // =======================================================================
@@ -377,38 +425,103 @@ describe("ProToken", function () {
             expect(await proToken.totalSupply()).to.equal(supplyBefore);
             expect(await proToken.balanceOf(accounts.user1.address)).to.equal(balBefore);
         });
+        // --- Corner case: setUSDPrice mid-ramp, an asymmetry vs. updateUSDPrice ---
+        // updateUSDPrice anchors its "old" on the stored futurePrice (the pending
+        // target), but setUSDPrice anchors on _currentPrice() (the LIVE
+        // interpolated value) — it's the admin's escape hatch and is meant to
+        // reflect what users are actually seeing right now, not the abandoned
+        // segment's destination.
+        describe("mid-ramp override (asymmetry vs. updateUSDPrice)", function () {
+            it("emits the LIVE interpolated price as `old`, not the pending target", async function () {
+                const { proToken, accounts } = await loadFixture(proTokenFixture);
+                await skipInitialCooldown();
+                const period = 1000;
+                const startTime = (await time.latest()) + 1;
+                const target = ethers.parseUnits("2.0", 18);
+                await proToken.connect(accounts.priceOperator).updateUSDPrice(
+                    target, startTime, period
+                );
+                // Partway through 1.0 -> 2.0, still mid-ramp.
+                await time.increaseTo(startTime + period / 2);
+                const tx = await proToken.connect(accounts.admin).setUSDPrice(
+                    ethers.parseUnits("3.0", 18)
+                );
+                // "old" must be the live interpolated value at the moment of this
+                // tx — strictly between inPrice and the pending target — not the
+                // abandoned segment's futurePrice (2.0) itself.
+                await expect(tx)
+                    .to.emit(proToken, EVENTS.USDPriceSet)
+                    .withArgs((v: bigint) => v > DEFAULT_USD_PRICE && v < target, ethers.parseUnits("3.0", 18));
+            });
+            it("collapses an active ramp to a flat segment immediately", async function () {
+                const { proToken, accounts } = await loadFixture(proTokenFixture);
+                await skipInitialCooldown();
+                const period = 1000;
+                const startTime = (await time.latest()) + 1;
+                await proToken.connect(accounts.priceOperator).updateUSDPrice(
+                    ethers.parseUnits("2.0", 18), startTime, period
+                );
+                await time.increaseTo(startTime + period / 2);
+                const overridePrice = ethers.parseUnits("5.0", 18);
+                await proToken.connect(accounts.admin).setUSDPrice(overridePrice);
+                const seg = await proToken.getUSDPriceSegment();
+                expect(seg[0]).to.equal(overridePrice); // inPrice
+                expect(seg[1]).to.equal(overridePrice); // futurePrice
+                expect(seg[3]).to.equal(0n);             // period — flat, no ramp
+                // Time passing after the override doesn't move the price at all.
+                await time.increase(period * 10);
+                expect(await proToken.getUSDPrice()).to.equal(overridePrice);
+            });
+        });
     });
     // =======================================================================
     // updateUSDPrice (PRICE-OPERATOR-only, constrained — the hot path)
     //
-    // The priceOperator's routine path: strictly increasing, step-size bounded
-    // (stepSize 0 = unlimited), refuses to run while the price is disabled
-    // (re-enabling from 0 is an admin-only action via setUSDPrice), and
-    // cooldown-gated.
+    // The priceOperator's routine path: opens a linear ramp segment (price,
+    // startTime, period) instead of jumping instantly (see the "Linear price
+    // ramp" section below for the curve itself; inPrice is derived on-chain
+    // from the previous segment's futurePrice, never passed in). Strictly
+    // increasing vs. that stored futurePrice, step-size bounded (stepSize 0 =
+    // unlimited), refuses to run while the price is disabled (re-enabling
+    // from 0 is an admin-only action via setUSDPrice), and cooldown-gated.
     //
     // Validation order in the contract:
     //   1. InvalidPrice              (_price > 0 but < 1e18)
-    //   2. PriceUpdateCooldownActive (block.timestamp < lastPriceUpdateAt + cooldown)
-    //   3. USDPriceDisabled          (current price is 0)
-    //   4. PriceNotIncreasing        (_price <= current)
-    //   5. PriceStepSizeExceeded     (stepSize != 0 and jump > stepSize)
-    // Tests that target checks 3–5 must first clear the cooldown (check 2),
+    //   2. InvalidRampPeriod         (_period outside [MIN_RAMP_PERIOD, MAX_RAMP_PERIOD])
+    //   3. StaleSegment              (_startTime < current segment's own end, startTime + period)
+    //   4. PriceUpdateCooldownActive (block.timestamp < lastPriceUpdateAt + cooldown)
+    //   5. USDPriceDisabled          (stored futurePrice is 0)
+    //   6. PriceNotIncreasing        (_price <= stored futurePrice)
+    //   7. PriceStepSizeExceeded     (stepSize != 0 and jump > stepSize)
+    // Tests that target checks 5–7 must first clear the cooldown (check 4),
     // hence skipInitialCooldown() at the top of those tests. InvalidPrice
     // (check 1) fires before the cooldown, so those tests need no skip.
+    //
+    // updateUSDPrice() (the JS helper) submits with a short default period and
+    // settles time past it, so getUSDPrice() reads `price` immediately after
+    // the call returns — see the helper's doc comment above. The ramp's
+    // actual shape (interpolation, boundaries, cross-chain identical curves)
+    // is covered separately in "Linear price ramp" and "Multichain segment
+    // consistency" below.
     // =======================================================================
     describe("updateUSDPrice() — priceOperator-only", function () {
         it("priceOperator can increase the price (no step size configured = unlimited)", async function () {
             const { proToken, accounts } = await loadFixture(proTokenFixture);
             await skipInitialCooldown();
             const newPrice = ethers.parseUnits("1.25", 18);
-            await proToken.connect(accounts.priceOperator).updateUSDPrice(newPrice);
+            await updateUSDPrice(proToken, accounts.priceOperator, newPrice);
             expect(await proToken.getUSDPrice()).to.equal(newPrice);
         });
         it("emits USDPriceUpdated(prev, new)", async function () {
             const { proToken, accounts } = await loadFixture(proTokenFixture);
             await skipInitialCooldown();
             const newPrice = ethers.parseUnits("1.1", 18);
-            await expect(proToken.connect(accounts.priceOperator).updateUSDPrice(newPrice))
+            const args = await buildUpdateArgs(newPrice);
+            await expect(
+                proToken.connect(accounts.priceOperator).updateUSDPrice(
+                    args.price, args.startTime, args.period
+                )
+            )
                 .to.emit(proToken, EVENTS.USDPriceUpdated)
                 .withArgs(DEFAULT_USD_PRICE, newPrice);
         });
@@ -418,37 +531,37 @@ describe("ProToken", function () {
             const p1 = ethers.parseUnits("1.05", 18);
             const p2 = ethers.parseUnits("1.10", 18);
             const p3 = ethers.parseUnits("1.15", 18);
-            await proToken.connect(accounts.priceOperator).updateUSDPrice(p1);
+            await updateUSDPrice(proToken, accounts.priceOperator, p1);
             await time.increase(PRICE_UPDATE_COOLDOWN + 1); // respect the 23h cooldown
-            await proToken.connect(accounts.priceOperator).updateUSDPrice(p2);
+            await updateUSDPrice(proToken, accounts.priceOperator, p2);
             await time.increase(PRICE_UPDATE_COOLDOWN + 1);
-            await proToken.connect(accounts.priceOperator).updateUSDPrice(p3);
+            await updateUSDPrice(proToken, accounts.priceOperator, p3);
             expect(await proToken.getUSDPrice()).to.equal(p3);
         });
         it("reverts PriceNotIncreasing when new price equals current", async function () {
             const { proToken, accounts } = await loadFixture(proTokenFixture);
             await skipInitialCooldown(); // clear the cooldown so monotonicity is what fires
             await expect(
-                proToken.connect(accounts.priceOperator).updateUSDPrice(DEFAULT_USD_PRICE)
+                updateUSDPrice(proToken, accounts.priceOperator, DEFAULT_USD_PRICE)
             ).to.be.revertedWithCustomError(proToken, ERRORS.PriceNotIncreasing);
         });
         it("reverts PriceNotIncreasing when new price is lower (no markdowns on this path)", async function () {
             const { proToken, accounts } = await loadFixture(proTokenFixture);
             await skipInitialCooldown();
-            await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.5", 18));
+            await updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.5", 18));
             await time.increase(PRICE_UPDATE_COOLDOWN + 1); // past the cooldown so monotonicity is what fires
             await expect(
-                proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.2", 18))
+                updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.2", 18))
             ).to.be.revertedWithCustomError(proToken, ERRORS.PriceNotIncreasing);
         });
         it("reverts PriceNotIncreasing on _price = 0 (cannot disable via this path)", async function () {
             const { proToken, accounts } = await loadFixture(proTokenFixture);
-            await skipInitialCooldown(); // clear the cooldown so monotonicity is what fires
+            await skipInitialCooldown();
             // _price=0 passes the InvalidPrice check (0 is exempt), then fails
-            // the monotonicity check since 0 <= current. The priceOperator has
-            // no route to disabling the price.
+            // monotonicity since 0 <= the stored futurePrice (DEFAULT_USD_PRICE).
+            // The priceOperator has no route to disabling the price.
             await expect(
-                proToken.connect(accounts.priceOperator).updateUSDPrice(0)
+                updateUSDPrice(proToken, accounts.priceOperator, 0n)
             ).to.be.revertedWithCustomError(proToken, ERRORS.PriceNotIncreasing);
         });
         it("reverts InvalidPrice when _price > 0 but < MIN_USD_PRICE (checked before the cooldown)", async function () {
@@ -456,7 +569,7 @@ describe("ProToken", function () {
             // No skip: InvalidPrice fires before the cooldown check, so it is the
             // revert even while the initial window is still running.
             await expect(
-                proToken.connect(accounts.priceOperator).updateUSDPrice(MIN_USD_PRICE - 1n)
+                updateUSDPrice(proToken, accounts.priceOperator, MIN_USD_PRICE - 1n)
             ).to.be.revertedWithCustomError(proToken, ERRORS.InvalidPrice);
         });
         it("reverts USDPriceDisabled when price is disabled (admin must re-enable)", async function () {
@@ -466,25 +579,28 @@ describe("ProToken", function () {
             // check (which runs after the cooldown check) is what fires.
             await skipInitialCooldown();
             await expect(
-                proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.5", 18))
+                updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.5", 18))
             ).to.be.revertedWithCustomError(proToken, ERRORS.USDPriceDisabled);
         });
         it("reverts when called by admin (role isolation: their path is setUSDPrice)", async function () {
             const { proToken, accounts } = await loadFixture(proTokenFixture);
+            const p = ethers.parseUnits("1.5", 18);
             await expect(
-                proToken.connect(accounts.admin).updateUSDPrice(ethers.parseUnits("1.5", 18))
+                proToken.connect(accounts.admin).updateUSDPrice(p, 1, ONE_MINUTE)
             ).to.be.revertedWithCustomError(proToken, ERRORS.NotPriceOperator);
         });
         it("reverts when called by operator", async function () {
             const { proToken, accounts } = await loadFixture(proTokenFixture);
+            const p = ethers.parseUnits("1.5", 18);
             await expect(
-                proToken.connect(accounts.operator).updateUSDPrice(ethers.parseUnits("1.5", 18))
+                proToken.connect(accounts.operator).updateUSDPrice(p, 1, ONE_MINUTE)
             ).to.be.revertedWithCustomError(proToken, ERRORS.NotPriceOperator);
         });
         it("reverts when called by random attacker", async function () {
             const { proToken, accounts } = await loadFixture(proTokenFixture);
+            const p = ethers.parseUnits("1.5", 18);
             await expect(
-                proToken.connect(accounts.attacker).updateUSDPrice(ethers.parseUnits("1.5", 18))
+                proToken.connect(accounts.attacker).updateUSDPrice(p, 1, ONE_MINUTE)
             ).to.be.revertedWithCustomError(proToken, ERRORS.NotPriceOperator);
         });
         describe("step-size enforcement", function () {
@@ -493,9 +609,7 @@ describe("ProToken", function () {
                 const { proToken, accounts } = await loadFixture(proTokenFixture);
                 await proToken.connect(accounts.admin).setStepSize(STEP);
                 await skipInitialCooldown();
-                await proToken.connect(accounts.priceOperator).updateUSDPrice(
-                    DEFAULT_USD_PRICE + STEP
-                );
+                await updateUSDPrice(proToken, accounts.priceOperator, DEFAULT_USD_PRICE + STEP);
                 expect(await proToken.getUSDPrice()).to.equal(DEFAULT_USD_PRICE + STEP);
             });
             it("reverts PriceStepSizeExceeded on a jump of stepSize + 1 wei", async function () {
@@ -503,18 +617,16 @@ describe("ProToken", function () {
                 await proToken.connect(accounts.admin).setStepSize(STEP);
                 await skipInitialCooldown();
                 await expect(
-                    proToken.connect(accounts.priceOperator).updateUSDPrice(
-                        DEFAULT_USD_PRICE + STEP + 1n
-                    )
+                    updateUSDPrice(proToken, accounts.priceOperator, DEFAULT_USD_PRICE + STEP + 1n)
                 ).to.be.revertedWithCustomError(proToken, ERRORS.PriceStepSizeExceeded);
             });
             it("step applies per-update: two sequential max-step jumps both pass", async function () {
                 const { proToken, accounts } = await loadFixture(proTokenFixture);
                 await proToken.connect(accounts.admin).setStepSize(STEP);
                 await skipInitialCooldown();
-                await proToken.connect(accounts.priceOperator).updateUSDPrice(DEFAULT_USD_PRICE + STEP);
+                await updateUSDPrice(proToken, accounts.priceOperator, DEFAULT_USD_PRICE + STEP);
                 await time.increase(PRICE_UPDATE_COOLDOWN + 1); // respect the 23h cooldown
-                await proToken.connect(accounts.priceOperator).updateUSDPrice(DEFAULT_USD_PRICE + STEP * 2n);
+                await updateUSDPrice(proToken, accounts.priceOperator, DEFAULT_USD_PRICE + STEP * 2n);
                 expect(await proToken.getUSDPrice()).to.equal(DEFAULT_USD_PRICE + STEP * 2n);
             });
             it("stepSize = 0 means UNLIMITED jumps (documented risk semantics)", async function () {
@@ -522,71 +634,200 @@ describe("ProToken", function () {
                 await skipInitialCooldown();
                 // Default stepSize is 0 — no bound. A giant jump succeeds.
                 const giant = ethers.parseUnits("1000", 18);
-                await proToken.connect(accounts.priceOperator).updateUSDPrice(giant);
+                await updateUSDPrice(proToken, accounts.priceOperator, giant);
                 expect(await proToken.getUSDPrice()).to.equal(giant);
             });
             it("admin tightening stepSize immediately constrains the next update", async function () {
                 const { proToken, accounts } = await loadFixture(proTokenFixture);
                 await skipInitialCooldown();
                 // Unlimited jump first...
-                await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("2", 18));
+                await updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("2", 18));
                 // ...then admin bounds it; an over-step now reverts.
                 await proToken.connect(accounts.admin).setStepSize(STEP);
                 await time.increase(PRICE_UPDATE_COOLDOWN + 1); // past the cooldown so the step check is what fires
                 await expect(
-                    proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("3", 18))
+                    updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("3", 18))
                 ).to.be.revertedWithCustomError(proToken, ERRORS.PriceStepSizeExceeded);
+            });
+        });
+        describe("segment validation (period bound, replay/ordering guard)", function () {
+            it("reverts InvalidRampPeriod when period is below MIN_RAMP_PERIOD", async function () {
+                const { proToken, accounts } = await loadFixture(proTokenFixture);
+                await skipInitialCooldown();
+                const min = await proToken.MIN_RAMP_PERIOD();
+                await expect(
+                    updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.1", 18), {
+                        period: Number(min) - 1,
+                    })
+                ).to.be.revertedWithCustomError(proToken, ERRORS.InvalidRampPeriod);
+            });
+            it("reverts InvalidRampPeriod on period = 0", async function () {
+                const { proToken, accounts } = await loadFixture(proTokenFixture);
+                await skipInitialCooldown();
+                await expect(
+                    updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.1", 18), {
+                        period: 0,
+                    })
+                ).to.be.revertedWithCustomError(proToken, ERRORS.InvalidRampPeriod);
+            });
+            it("reverts InvalidRampPeriod when period exceeds MAX_RAMP_PERIOD", async function () {
+                const { proToken, accounts } = await loadFixture(proTokenFixture);
+                await skipInitialCooldown();
+                const max = await proToken.MAX_RAMP_PERIOD();
+                await expect(
+                    updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.1", 18), {
+                        period: Number(max) + 1,
+                    })
+                ).to.be.revertedWithCustomError(proToken, ERRORS.InvalidRampPeriod);
+            });
+            it("accepts period at exactly MIN_RAMP_PERIOD and MAX_RAMP_PERIOD (boundaries pass)", async function () {
+                const { proToken, accounts } = await loadFixture(proTokenFixture);
+                await skipInitialCooldown();
+                const min = await proToken.MIN_RAMP_PERIOD();
+                await updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.1", 18), {
+                    period: Number(min),
+                });
+                await time.increase(PRICE_UPDATE_COOLDOWN + 1);
+                const max = await proToken.MAX_RAMP_PERIOD();
+                await updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.2", 18), {
+                    period: Number(max),
+                });
+                expect(await proToken.getUSDPrice()).to.equal(ethers.parseUnits("1.2", 18));
+            });
+            it("reverts StaleSegment when startTime is before the current (flat) segment's", async function () {
+                const { proToken, accounts } = await loadFixture(proTokenFixture);
+                await skipInitialCooldown();
+                const [, , currentStartTime] = await proToken.getUSDPriceSegment();
+                await expect(
+                    proToken.connect(accounts.priceOperator).updateUSDPrice(
+                        ethers.parseUnits("1.1", 18), currentStartTime - 1n, ONE_MINUTE
+                    )
+                )
+                    .to.be.revertedWithCustomError(proToken, ERRORS.StaleSegment)
+                    .withArgs(currentStartTime - 1n, currentStartTime);
+            });
+            it("accepts startTime exactly equal to a flat (period = 0) segment's own startTime — its end coincides with its start", async function () {
+                const { proToken, accounts } = await loadFixture(proTokenFixture);
+                await skipInitialCooldown();
+                const [, , currentStartTime] = await proToken.getUSDPriceSegment();
+                // Bootstrap segment has period == 0, so startTime + period == startTime;
+                // an incoming segment starting at that same instant does not overlap.
+                await proToken.connect(accounts.priceOperator).updateUSDPrice(
+                    ethers.parseUnits("1.1", 18), currentStartTime, ONE_MINUTE
+                );
+                expect((await proToken.getUSDPriceSegment())[2]).to.equal(currentStartTime);
+            });
+            it("reverts StaleSegment when startTime falls strictly inside an active (non-flat) ramp — segments can never overlap", async function () {
+                const { proToken, accounts } = await loadFixture(proTokenFixture);
+                await skipInitialCooldown();
+                const period = 1000;
+                const priorStart = (await time.latest()) + 1;
+                await proToken.connect(accounts.priceOperator).updateUSDPrice(
+                    ethers.parseUnits("1.5", 18), priorStart, period
+                );
+                const priorEnd = priorStart + period;
+                await expect(
+                    proToken.connect(accounts.priceOperator).updateUSDPrice(
+                        ethers.parseUnits("1.6", 18), priorEnd - 1, ONE_MINUTE
+                    )
+                )
+                    .to.be.revertedWithCustomError(proToken, ERRORS.StaleSegment)
+                    .withArgs(priorEnd - 1, priorStart);
+            });
+            it("accepts startTime exactly at the end of the previous (non-flat) segment (boundary passes, no overlap)", async function () {
+                const { proToken, accounts } = await loadFixture(proTokenFixture);
+                await skipInitialCooldown();
+                await proToken.connect(accounts.admin).setPriceUpdateCooldown(0); // isolate the overlap boundary from the 23h cooldown
+                const period = 1000;
+                const priorStart = (await time.latest()) + 1;
+                await proToken.connect(accounts.priceOperator).updateUSDPrice(
+                    ethers.parseUnits("1.5", 18), priorStart, period
+                );
+                const priorEnd = priorStart + period;
+                await proToken.connect(accounts.priceOperator).updateUSDPrice(
+                    ethers.parseUnits("1.6", 18), priorEnd, ONE_MINUTE
+                );
+                expect((await proToken.getUSDPriceSegment())[2]).to.equal(BigInt(priorEnd));
+            });
+            it("reverts StaleSegment against a segment written by admin's setUSDPrice, not just a prior updateUSDPrice", async function () {
+                // The replay/overlap guard reads the single shared startTime/period
+                // slots regardless of which function last wrote them.
+                const { proToken, accounts } = await loadFixture(proTokenFixture);
+                await proToken.connect(accounts.admin).setUSDPrice(ethers.parseUnits("1.3", 18));
+                const [, , adminStartTime] = await proToken.getUSDPriceSegment();
+                await skipInitialCooldown();
+                await expect(
+                    proToken.connect(accounts.priceOperator).updateUSDPrice(
+                        ethers.parseUnits("1.4", 18), adminStartTime - 1n, ONE_MINUTE
+                    )
+                )
+                    .to.be.revertedWithCustomError(proToken, ERRORS.StaleSegment)
+                    .withArgs(adminStartTime - 1n, adminStartTime);
+                // setUSDPrice's segment is flat (period 0), so startTime itself
+                // (its own end) is a valid boundary for the next segment too.
+                await proToken.connect(accounts.priceOperator).updateUSDPrice(
+                    ethers.parseUnits("1.4", 18), adminStartTime, ONE_MINUTE
+                );
+            });
+            it("InvalidPrice takes precedence over InvalidRampPeriod when both _price and _period are invalid", async function () {
+                const { proToken, accounts } = await loadFixture(proTokenFixture);
+                await skipInitialCooldown();
+                await expect(
+                    proToken.connect(accounts.priceOperator).updateUSDPrice(
+                        MIN_USD_PRICE - 1n, (await time.latest()) + 1, 0
+                    )
+                ).to.be.revertedWithCustomError(proToken, ERRORS.InvalidPrice);
             });
         });
         describe("price update cooldown (23h; seeded at init, reset by admin sets)", function () {
             it("first update after deployment IS cooldown-gated (init seeds the clock)", async function () {
                 const { proToken, accounts } = await loadFixture(proTokenFixture);
                 await expect(
-                    proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.1", 18))
+                    updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.1", 18))
                 ).to.be.revertedWithCustomError(proToken, ERRORS.PriceUpdateCooldownActive);
                 await time.increase(PRICE_UPDATE_COOLDOWN + 1);
-                await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.1", 18));
+                await updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.1", 18));
                 expect(await proToken.getUSDPrice()).to.equal(ethers.parseUnits("1.1", 18));
             });
             it("second update within the window reverts PriceUpdateCooldownActive", async function () {
                 const { proToken, accounts } = await loadFixture(proTokenFixture);
                 await skipInitialCooldown();
-                await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.1", 18));
+                await updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.1", 18));
                 await time.increase(60 * 60); // 1h — still 22h short
                 await expect(
-                    proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.2", 18))
+                    updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.2", 18))
                 ).to.be.revertedWithCustomError(proToken, ERRORS.PriceUpdateCooldownActive);
             });
             it("update succeeds once the cooldown has elapsed", async function () {
                 const { proToken, accounts } = await loadFixture(proTokenFixture);
                 await skipInitialCooldown();
-                await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.1", 18));
+                await updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.1", 18));
                 await time.increase(PRICE_UPDATE_COOLDOWN + 1);
-                await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.2", 18));
+                await updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.2", 18));
                 expect(await proToken.getUSDPrice()).to.equal(ethers.parseUnits("1.2", 18));
             });
             it("passes at exactly availableAt (boundary: check is strict <)", async function () {
                 const { proToken, accounts } = await loadFixture(proTokenFixture);
                 await skipInitialCooldown();
-                await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.1", 18));
+                await updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.1", 18));
                 const last = await proToken.getLastPriceUpdateAt();
                 // Next tx mines at last + COOLDOWN exactly → block.timestamp == availableAt → passes.
                 await time.increaseTo(last + BigInt(PRICE_UPDATE_COOLDOWN) - 1n);
-                await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.2", 18));
+                await updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.2", 18));
                 expect(await proToken.getUSDPrice()).to.equal(ethers.parseUnits("1.2", 18));
             });
             it("a reverted attempt does not extend the window", async function () {
                 const { proToken, accounts } = await loadFixture(proTokenFixture);
                 await skipInitialCooldown();
-                await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.1", 18));
+                await updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.1", 18));
                 const last = await proToken.getLastPriceUpdateAt();
                 await time.increase(60 * 60);
                 await expect(
-                    proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.2", 18))
+                    updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.2", 18))
                 ).to.be.revertedWithCustomError(proToken, ERRORS.PriceUpdateCooldownActive);
                 // The window is still keyed to the ORIGINAL successful update.
                 await time.increaseTo(last + BigInt(PRICE_UPDATE_COOLDOWN) + 1n);
-                await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.2", 18));
+                await updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.2", 18));
                 expect(await proToken.getUSDPrice()).to.equal(ethers.parseUnits("1.2", 18));
             });
             it("admin setUSDPrice RESETS the cooldown: operator must wait a full window after an admin set", async function () {
@@ -598,11 +839,11 @@ describe("ProToken", function () {
                 // The admin action started a fresh cooldown window — an
                 // immediate operator update is rejected.
                 await expect(
-                    proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.6", 18))
+                    updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.6", 18))
                 ).to.be.revertedWithCustomError(proToken, ERRORS.PriceUpdateCooldownActive);
                 // After the full window, the operator proceeds normally.
                 await time.increase(PRICE_UPDATE_COOLDOWN + 1);
-                await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.6", 18));
+                await updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.6", 18));
                 expect(await proToken.getUSDPrice()).to.equal(ethers.parseUnits("1.6", 18));
             });
             it("admin markdown RESETS the operator's clock (markdown-race protection)", async function () {
@@ -611,31 +852,247 @@ describe("ProToken", function () {
                 // operator-free window from the ADMIN action.
                 const { proToken, accounts } = await loadFixture(proTokenFixture);
                 await skipInitialCooldown();
-                await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.1", 18));
+                await updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.1", 18));
                 // Partway through the window, admin marks down (slash step 1).
                 await time.increase(60 * 60);
                 await proToken.connect(accounts.admin).setUSDPrice(ethers.parseUnits("1.02", 18));
                 const adminSetAt = BigInt(await time.latest());
                 // Operator locked out for a FULL window from the ADMIN action.
                 await expect(
-                    proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.06", 18))
+                    updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.06", 18))
                 ).to.be.revertedWithCustomError(proToken, ERRORS.PriceUpdateCooldownActive);
                 // Even after the ORIGINAL window would have elapsed, still
                 // locked — the clock re-keyed to the admin set.
                 await time.increaseTo(adminSetAt + BigInt(PRICE_UPDATE_COOLDOWN) - 10n);
                 await expect(
-                    proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.06", 18))
+                    updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.06", 18))
                 ).to.be.revertedWithCustomError(proToken, ERRORS.PriceUpdateCooldownActive);
                 await time.increaseTo(adminSetAt + BigInt(PRICE_UPDATE_COOLDOWN) + 1n);
-                await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.06", 18));
+                await updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.06", 18));
                 expect(await proToken.getUSDPrice()).to.equal(ethers.parseUnits("1.06", 18));
             });
             it("getLastPriceUpdateAt tracks the last successful operator update", async function () {
                 const { proToken, accounts } = await loadFixture(proTokenFixture);
                 await skipInitialCooldown();
-                await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.1", 18));
+                // settle:false — the assertion checks the tx's own block
+                // timestamp, so the helper's post-call fast-forward would
+                // otherwise move time.latest() past it.
+                await updateUSDPrice(
+                    proToken, accounts.priceOperator, ethers.parseUnits("1.1", 18), { settle: false }
+                );
                 expect(await proToken.getLastPriceUpdateAt()).to.equal(BigInt(await time.latest()));
             });
+        });
+    });
+    // =======================================================================
+    // Linear price ramp — the interpolation curve itself
+    //
+    // getUSDPrice() is a pure function of the active segment
+    // (inPrice, futurePrice, startTime, period) and block.timestamp. inPrice
+    // is never a caller-supplied value — updateUSDPrice() sets it automatically
+    // to the *previous* segment's futurePrice, so every test here gets its
+    // starting inPrice "for free" from whatever the current stored futurePrice
+    // already is (DEFAULT_USD_PRICE straight after the fixture's bootstrap
+    // segment) rather than passing it explicitly.
+    // =======================================================================
+    describe("Linear price ramp (getUSDPrice interpolation)", function () {
+        const PERIOD = 1000; // seconds
+        it("returns inPrice at/before startTime", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await skipInitialCooldown();
+            const futurePrice = ethers.parseUnits("1.5", 18);
+            const startTime = (await time.latest()) + 100; // in the future
+            await proToken.connect(accounts.priceOperator).updateUSDPrice(
+                futurePrice, startTime, PERIOD
+            );
+            // block.timestamp is still well before startTime; inPrice was
+            // derived automatically from the bootstrap segment's futurePrice.
+            expect(await proToken.getUSDPrice()).to.equal(DEFAULT_USD_PRICE);
+        });
+        it("returns inPrice exactly AT startTime (boundary: block.timestamp <= startTime)", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await skipInitialCooldown();
+            const futurePrice = ethers.parseUnits("1.5", 18);
+            const startTime = (await time.latest()) + 100;
+            await proToken.connect(accounts.priceOperator).updateUSDPrice(
+                futurePrice, startTime, PERIOD
+            );
+            await time.increaseTo(startTime); // block.timestamp === startTime exactly
+            expect(await proToken.getUSDPrice()).to.equal(DEFAULT_USD_PRICE);
+        });
+        it("interpolates linearly at the midpoint (increasing segment)", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await skipInitialCooldown();
+            const futurePrice = ethers.parseUnits("1.5", 18);
+            const startTime = (await time.latest()) + 1;
+            await proToken.connect(accounts.priceOperator).updateUSDPrice(
+                futurePrice, startTime, PERIOD
+            );
+            await time.increaseTo(startTime + PERIOD / 2);
+            // Halfway through a 1e18 -> 1.5e18 ramp: 1.25e18.
+            expect(await proToken.getUSDPrice()).to.equal(ethers.parseUnits("1.25", 18));
+        });
+        it("returns futurePrice at exactly startTime + period", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await skipInitialCooldown();
+            const futurePrice = ethers.parseUnits("1.5", 18);
+            const startTime = (await time.latest()) + 1;
+            await proToken.connect(accounts.priceOperator).updateUSDPrice(
+                futurePrice, startTime, PERIOD
+            );
+            await time.increaseTo(startTime + PERIOD);
+            expect(await proToken.getUSDPrice()).to.equal(futurePrice);
+        });
+        it("is still strictly below futurePrice one second before the segment ends", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await skipInitialCooldown();
+            const futurePrice = ethers.parseUnits("1.5", 18);
+            const startTime = (await time.latest()) + 1;
+            await proToken.connect(accounts.priceOperator).updateUSDPrice(
+                futurePrice, startTime, PERIOD
+            );
+            await time.increaseTo(startTime + PERIOD - 1);
+            const price = await proToken.getUSDPrice();
+            expect(price).to.be.lt(futurePrice);
+            expect(price).to.be.gt(DEFAULT_USD_PRICE);
+        });
+        it("floors (truncates) the interpolated value when elapsed/period doesn't divide evenly", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await skipInitialCooldown();
+            // inPrice=1e18 (bootstrap), futurePrice=inPrice+1 wei, period=PERIOD
+            // (1000s, >= MIN_RAMP_PERIOD). (1 wei * elapsed) / period floors to
+            // 0 for every elapsed strictly below period, since the numerator
+            // never reaches the denominator — so the price reads exactly
+            // inPrice for the entire ramp, then jumps straight to futurePrice
+            // the instant the segment ends. No fractional-wei drift mid-ramp.
+            const futurePrice = DEFAULT_USD_PRICE + 1n;
+            const startTime = (await time.latest()) + 1;
+            await proToken.connect(accounts.priceOperator).updateUSDPrice(
+                futurePrice, startTime, PERIOD
+            );
+            await time.increaseTo(startTime + 1);
+            expect(await proToken.getUSDPrice()).to.equal(DEFAULT_USD_PRICE);
+            await time.increaseTo(startTime + PERIOD - 1);
+            expect(await proToken.getUSDPrice()).to.equal(DEFAULT_USD_PRICE);
+            // At elapsed == period: the >= endTime branch takes over and
+            // returns futurePrice exactly, regardless of the division.
+            await time.increaseTo(startTime + PERIOD);
+            expect(await proToken.getUSDPrice()).to.equal(futurePrice);
+        });
+        it("getUSDPriceSegment() does not revert and returns the zeroed segment while the price is disabled", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await proToken.connect(accounts.admin).setUSDPrice(0);
+            await expect(proToken.getUSDPrice()).to.be.revertedWithCustomError(
+                proToken, ERRORS.USDPriceDisabled
+            );
+            const seg = await proToken.getUSDPriceSegment();
+            expect(seg[0]).to.equal(0n); // inPrice
+            expect(seg[1]).to.equal(0n); // futurePrice
+            expect(seg[3]).to.equal(0n); // period
+        });
+        it("stays flat at futurePrice after the segment ends", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await skipInitialCooldown();
+            const futurePrice = ethers.parseUnits("1.5", 18);
+            const startTime = (await time.latest()) + 1;
+            await proToken.connect(accounts.priceOperator).updateUSDPrice(
+                futurePrice, startTime, PERIOD
+            );
+            await time.increaseTo(startTime + PERIOD * 10);
+            expect(await proToken.getUSDPrice()).to.equal(futurePrice);
+        });
+        it("getUSDPriceSegment() returns the raw stored segment, including the auto-derived inPrice", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await skipInitialCooldown();
+            const futurePrice = ethers.parseUnits("1.5", 18);
+            const startTime = (await time.latest()) + 1;
+            await proToken.connect(accounts.priceOperator).updateUSDPrice(
+                futurePrice, startTime, PERIOD
+            );
+            const seg = await proToken.getUSDPriceSegment();
+            expect(seg[0]).to.equal(DEFAULT_USD_PRICE); // inPrice, derived not passed
+            expect(seg[1]).to.equal(futurePrice);
+            expect(seg[2]).to.equal(BigInt(startTime));
+            expect(seg[3]).to.equal(BigInt(PERIOD));
+        });
+        it("reverts StaleSegment on a mid-ramp update attempt — segments can never overlap", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await skipInitialCooldown();
+            // The 23h cooldown would otherwise block a second update while
+            // still mid-way through a ~16min ramp; disable it to isolate the
+            // overlap guard under test.
+            await proToken.connect(accounts.admin).setPriceUpdateCooldown(0);
+            // First segment: 1.0 -> 2.0 over 1000s.
+            const startTime1 = (await time.latest()) + 1;
+            await proToken.connect(accounts.priceOperator).updateUSDPrice(
+                ethers.parseUnits("2.0", 18), startTime1, PERIOD
+            );
+            // Attempt a second segment mid-ramp, at the 50% point — live price
+            // is 1.5, but the first segment hasn't reached its own end yet.
+            await time.increaseTo(startTime1 + PERIOD / 2);
+            expect(await proToken.getUSDPrice()).to.equal(ethers.parseUnits("1.5", 18));
+            const startTime2 = (await time.latest()) + 1;
+            await expect(
+                proToken.connect(accounts.priceOperator).updateUSDPrice(
+                    ethers.parseUnits("2.5", 18), startTime2, PERIOD
+                )
+            ).to.be.revertedWithCustomError(proToken, ERRORS.StaleSegment);
+            // Once the first segment fully settles, a new one is accepted normally.
+            await time.increaseTo(startTime1 + PERIOD);
+            const startTime3 = (await time.latest()) + 1;
+            await proToken.connect(accounts.priceOperator).updateUSDPrice(
+                ethers.parseUnits("2.5", 18), startTime3, PERIOD
+            );
+            expect((await proToken.getUSDPriceSegment())[0]).to.equal(ethers.parseUnits("2.0", 18));
+        });
+    });
+    // =======================================================================
+    // Multichain segment consistency
+    //
+    // updateUSDPrice takes (price, startTime, period) as caller-supplied
+    // values — inPrice is deliberately NOT one of them. The oracle submits
+    // the exact same three-value calldata to every chain the token is
+    // deployed on; each chain independently derives the identical inPrice
+    // from its own (identically-built) prior state, so every chain ends up
+    // tracing the identical curve — regardless of each chain's own
+    // confirmation timing, and with nothing extra to keep in sync.
+    // =======================================================================
+    describe("Multichain segment consistency", function () {
+        it("identical calldata submitted at different local times produces identical segments (including the derived inPrice) and converges to the same price", async function () {
+            // Two genuinely independent deployments simulating two chains —
+            // loadFixture() would snapshot/reuse the SAME contract instance
+            // for a repeated fixture within one test, which defeats the point
+            // here, so proTokenFixture() is called directly (unwrapped) twice.
+            const { proToken: chainA, accounts: accountsA } = await proTokenFixture();
+            const { proToken: chainB, accounts: accountsB } = await proTokenFixture();
+            await time.increase(PRICE_UPDATE_COOLDOWN + 1);
+            const futurePrice = ethers.parseUnits("1.5", 18);
+            const period = 1000;
+            // The oracle computes one absolute startTime off-chain (in the
+            // near future relative to submission) and broadcasts the same
+            // three values everywhere.
+            const startTime = (await time.latest()) + 500;
+            // Chain A's update confirms almost immediately...
+            await chainA.connect(accountsA.priceOperator).updateUSDPrice(
+                futurePrice, startTime, period
+            );
+            // ...chain B's confirms much later (simulating slower/laggier
+            // finality), but the calldata submitted is byte-for-byte the same.
+            await time.increase(200);
+            await chainB.connect(accountsB.priceOperator).updateUSDPrice(
+                futurePrice, startTime, period
+            );
+            const segA = await chainA.getUSDPriceSegment();
+            const segB = await chainB.getUSDPriceSegment();
+            expect(segA[0]).to.equal(segB[0]); // inPrice — derived locally on each chain, still matches
+            expect(segA[1]).to.equal(segB[1]); // futurePrice
+            expect(segA[2]).to.equal(segB[2]); // startTime
+            expect(segA[3]).to.equal(segB[3]); // period
+            // Both chains converge to the identical final price once the
+            // shared, absolute startTime + period has elapsed everywhere.
+            await time.increaseTo(startTime + period + 1);
+            expect(await chainA.getUSDPrice()).to.equal(futurePrice);
+            expect(await chainB.getUSDPrice()).to.equal(futurePrice);
         });
     });
     // =======================================================================
@@ -649,9 +1106,7 @@ describe("ProToken", function () {
             await skipInitialCooldown();
             // No public getter for stepSize; verify behaviorally: an over-step reverts.
             await expect(
-                proToken.connect(accounts.priceOperator).updateUSDPrice(
-                    DEFAULT_USD_PRICE + STEP + 1n
-                )
+                updateUSDPrice(proToken, accounts.priceOperator, DEFAULT_USD_PRICE + STEP + 1n)
             ).to.be.revertedWithCustomError(proToken, ERRORS.PriceStepSizeExceeded);
         });
         it("emits StepSizeChanged(prev, new)", async function () {
@@ -673,7 +1128,7 @@ describe("ProToken", function () {
             await proToken.connect(accounts.admin).setStepSize(0n);
             await skipInitialCooldown();
             // Unlimited again: a giant jump passes.
-            await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("100", 18));
+            await updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("100", 18));
             expect(await proToken.getUSDPrice()).to.equal(ethers.parseUnits("100", 18));
         });
         it("reverts when called by operator", async function () {
@@ -716,19 +1171,19 @@ describe("ProToken", function () {
             // With cooldown 0, availableAt == lastPriceUpdateAt (the init seed),
             // which is already in the past — no skip needed.
             await proToken.connect(accounts.admin).setPriceUpdateCooldown(0n);
-            await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.1", 18));
-            await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.2", 18));
+            await updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.1", 18));
+            await updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.2", 18));
             expect(await proToken.getUSDPrice()).to.equal(ethers.parseUnits("1.2", 18));
         });
         it("shortening the cooldown applies to the already-running window", async function () {
             const { proToken, accounts } = await loadFixture(proTokenFixture);
             await skipInitialCooldown();
-            await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.1", 18));
+            await updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.1", 18));
             // 23h window is running; admin shortens it to 1h.
             await proToken.connect(accounts.admin).setPriceUpdateCooldown(ONE_HOUR);
             await time.increase(ONE_HOUR + 1);
             // Passes 1h after the last update — no need to wait out the original 23h.
-            await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.2", 18));
+            await updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.2", 18));
             expect(await proToken.getUSDPrice()).to.equal(ethers.parseUnits("1.2", 18));
         });
         it("reverts when called by operator", async function () {
@@ -1190,9 +1645,9 @@ describe("ProToken", function () {
             const p = ethers.parseUnits("1.3", 18);
             await proTokenSettings.connect(accounts.admin).setPriceOperator(accounts.user1.address);
             await expect(
-                proToken.connect(accounts.priceOperator).updateUSDPrice(p)
+                updateUSDPrice(proToken, accounts.priceOperator, p)
             ).to.be.revertedWithCustomError(proToken, ERRORS.NotPriceOperator);
-            await proToken.connect(accounts.user1).updateUSDPrice(p);
+            await updateUSDPrice(proToken, accounts.user1, p);
             expect(await proToken.getUSDPrice()).to.equal(p);
         });
         it("pending admin proposal does not change current admin yet", async function () {
@@ -1324,9 +1779,9 @@ describe("ProToken", function () {
             const { proToken, accounts } = await loadFixture(proTokenFixture);
             await skipInitialCooldown();
             // Routine appreciation via the constrained path.
-            await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.05", 18));
+            await updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.05", 18));
             await time.increase(PRICE_UPDATE_COOLDOWN + 1); // respect the 23h cooldown
-            await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.10", 18));
+            await updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.10", 18));
             // Slash: admin marks down (the only role that can decrease). This
             // RESETS the operator's cooldown clock — the markdown gets a full
             // protected window for markdownPrice()/cover().
@@ -1334,12 +1789,12 @@ describe("ProToken", function () {
             expect(await proToken.getUSDPrice()).to.equal(ethers.parseUnits("1.02", 18));
             // An immediate operator overwrite is blocked (the race fix).
             await expect(
-                proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.06", 18))
+                updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.06", 18))
             ).to.be.revertedWithCustomError(proToken, ERRORS.PriceUpdateCooldownActive);
             // Recovery: priceOperator resumes increases once the admin-keyed
             // window has elapsed.
             await time.increase(PRICE_UPDATE_COOLDOWN + 1);
-            await proToken.connect(accounts.priceOperator).updateUSDPrice(ethers.parseUnits("1.06", 18));
+            await updateUSDPrice(proToken, accounts.priceOperator, ethers.parseUnits("1.06", 18));
             expect(await proToken.getUSDPrice()).to.equal(ethers.parseUnits("1.06", 18));
         });
     });

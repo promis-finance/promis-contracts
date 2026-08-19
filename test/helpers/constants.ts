@@ -151,6 +151,8 @@ export const ERRORS = {
     PriceNotIncreasing: "PriceNotIncreasing",
     PriceStepSizeExceeded: "PriceStepSizeExceeded",
     PriceUpdateCooldownActive: "PriceUpdateCooldownActive",
+    InvalidRampPeriod: "InvalidRampPeriod",
+    StaleSegment: "StaleSegment",
 
     // ERC20 (OZ v5)
     ERC20InvalidReceiver: "ERC20InvalidReceiver",
