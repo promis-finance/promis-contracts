@@ -64,16 +64,48 @@
     "inputs": [
       {
         "internalType": "uint64",
-        "name": "incomingStartTime",
+        "name": "currentSegmentEnd",
         "type": "uint64"
       },
       {
-        "internalType": "uint64",
-        "name": "currentStartTime",
-        "type": "uint64"
+        "internalType": "uint256",
+        "name": "blockTimestamp",
+        "type": "uint256"
       }
     ],
-    "name": "StaleSegment",
+    "name": "SegmentInProgress",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint64",
+        "name": "startTime",
+        "type": "uint64"
+      },
+      {
+        "internalType": "uint256",
+        "name": "blockTimestamp",
+        "type": "uint256"
+      }
+    ],
+    "name": "StartTimeInPast",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint64",
+        "name": "startTime",
+        "type": "uint64"
+      },
+      {
+        "internalType": "uint256",
+        "name": "blockTimestamp",
+        "type": "uint256"
+      }
+    ],
+    "name": "StartTimeTooFarInFuture",
     "type": "error"
   },
   {
@@ -109,6 +141,25 @@
       }
     ],
     "name": "Burned",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "prevValue",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "newValue",
+        "type": "uint256"
+      }
+    ],
+    "name": "MaxStartTimeAheadChanged",
     "type": "event"
   },
   {
@@ -352,6 +403,19 @@
       }
     ],
     "name": "setBridgeMinter",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "_maxStartTimeAhead",
+        "type": "uint256"
+      }
+    ],
+    "name": "setMaxStartTimeAhead",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"

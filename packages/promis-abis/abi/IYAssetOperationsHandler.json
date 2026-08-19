@@ -42,6 +42,33 @@
     "type": "error"
   },
   {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "handler",
+        "type": "address"
+      }
+    ],
+    "name": "HandlerBalanceUnverifiable",
+    "type": "error"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "handler",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "balance",
+        "type": "uint256"
+      }
+    ],
+    "name": "HandlerHasBalance",
+    "type": "error"
+  },
+  {
     "inputs": [],
     "name": "InsufficientBalance",
     "type": "error"
@@ -149,6 +176,19 @@
       }
     ],
     "name": "EmergencyWithdraw",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "handler",
+        "type": "address"
+      }
+    ],
+    "name": "HandlerDetachedUnverified",
     "type": "event"
   },
   {
@@ -327,6 +367,29 @@
     ],
     "name": "YProtocolHandlersSet",
     "type": "event"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_yAsset",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "_to",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "_amount",
+        "type": "uint256"
+      }
+    ],
+    "name": "collectFee",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
   },
   {
     "inputs": [],
@@ -508,6 +571,11 @@
         "internalType": "uint256[]",
         "name": "_allocations",
         "type": "uint256[]"
+      },
+      {
+        "internalType": "bool",
+        "name": "_forced",
+        "type": "bool"
       }
     ],
     "name": "setYProtocolHandlers",

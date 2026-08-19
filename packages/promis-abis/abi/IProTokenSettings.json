@@ -1,5 +1,21 @@
 [
   {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "yAsset",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "handler",
+        "type": "address"
+      }
+    ],
+    "name": "BalanceUnverifiable",
+    "type": "error"
+  },
+  {
     "inputs": [],
     "name": "GreaterThanAllowed",
     "type": "error"
@@ -731,6 +747,11 @@
         "internalType": "address",
         "name": "_yAsset",
         "type": "address"
+      },
+      {
+        "internalType": "bool",
+        "name": "_forced",
+        "type": "bool"
       }
     ],
     "name": "removeYAsset",

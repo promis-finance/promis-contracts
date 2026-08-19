@@ -48,9 +48,13 @@ const PRICE_UPDATE_COOLDOWN = 23 * 60 * 60;
 //                    NatSpec). Strictly increasing vs. that stored futurePrice,
 //                    step-size bounded (stepSize 0 = unlimited), cannot run
 //                    while price is disabled, cooldown-gated against
-//                    lastPriceUpdateAt, period-bounded, and startTime must be
-//                    at or after the current segment's own END (its startTime
-//                    + period) — segments can never overlap (replay/overlap guard).
+//                    lastPriceUpdateAt, period-bounded, startTime bounded to
+//                    [block.timestamp, block.timestamp + maxStartTimeAhead] (no
+//                    backdating, no indefinite freeze; maxStartTimeAhead is
+//                    admin-tunable, default DEFAULT_MAX_START_TIME_AHEAD = 20
+//                    minutes), and rejected outright
+//                    while the current segment is still ramping
+//                    (SegmentInProgress) — segments can never overlap.
 //   setStepSize    — ADMIN-only. Bounds the priceOperator's per-update increment.
 //
 // COOLDOWN SEEDING: initialize() seeds lastPriceUpdateAt = block.timestamp, so
@@ -488,14 +492,24 @@ describe("ProToken", function () {
     // Validation order in the contract:
     //   1. InvalidPrice              (_price > 0 but < 1e18)
     //   2. InvalidRampPeriod         (_period outside [MIN_RAMP_PERIOD, MAX_RAMP_PERIOD])
-    //   3. StaleSegment              (_startTime < current segment's own end, startTime + period)
-    //   4. PriceUpdateCooldownActive (block.timestamp < lastPriceUpdateAt + cooldown)
-    //   5. USDPriceDisabled          (stored futurePrice is 0)
-    //   6. PriceNotIncreasing        (_price <= stored futurePrice)
-    //   7. PriceStepSizeExceeded     (stepSize != 0 and jump > stepSize)
-    // Tests that target checks 5–7 must first clear the cooldown (check 4),
+    //   3. StartTimeInPast           (_startTime < block.timestamp)
+    //   4. StartTimeTooFarInFuture   (_startTime > block.timestamp + maxStartTimeAhead)
+    //   5. SegmentInProgress         (block.timestamp < current segment's own end, startTime + period)
+    //   6. PriceUpdateCooldownActive (block.timestamp < lastPriceUpdateAt + cooldown)
+    //   7. USDPriceDisabled          (stored futurePrice is 0)
+    //   8. PriceNotIncreasing        (_price <= stored futurePrice)
+    //   9. PriceStepSizeExceeded     (stepSize != 0 and jump > stepSize)
+    // Tests that target checks 7–9 must first clear the cooldown (check 6),
     // hence skipInitialCooldown() at the top of those tests. InvalidPrice
     // (check 1) fires before the cooldown, so those tests need no skip.
+    //
+    // NOTE: there is no direct "does _startTime overlap the current segment"
+    // check anymore. Checks 3 and 5 combined force it as a corollary:
+    // SegmentInProgress requires block.timestamp >= currentSegmentEnd, and
+    // StartTimeInPast requires _startTime >= block.timestamp, so transitively
+    // _startTime >= currentSegmentEnd always holds by the time execution
+    // reaches the price/step checks — segments can never overlap without a
+    // dedicated comparison for it.
     //
     // updateUSDPrice() (the JS helper) submits with a short default period and
     // settles time past it, so getUSDPrice() reads `price` immediately after
@@ -650,7 +664,7 @@ describe("ProToken", function () {
                 ).to.be.revertedWithCustomError(proToken, ERRORS.PriceStepSizeExceeded);
             });
         });
-        describe("segment validation (period bound, replay/ordering guard)", function () {
+        describe("segment validation (period bound, startTime bounds, overlap guard)", function () {
             it("reverts InvalidRampPeriod when period is below MIN_RAMP_PERIOD", async function () {
                 const { proToken, accounts } = await loadFixture(proTokenFixture);
                 await skipInitialCooldown();
@@ -694,30 +708,51 @@ describe("ProToken", function () {
                 });
                 expect(await proToken.getUSDPrice()).to.equal(ethers.parseUnits("1.2", 18));
             });
-            it("reverts StaleSegment when startTime is before the current (flat) segment's", async function () {
+            it("reverts StartTimeInPast when startTime is before block.timestamp", async function () {
                 const { proToken, accounts } = await loadFixture(proTokenFixture);
                 await skipInitialCooldown();
-                const [, , currentStartTime] = await proToken.getUSDPriceSegment();
+                const past = (await time.latest()) - 1;
                 await expect(
                     proToken.connect(accounts.priceOperator).updateUSDPrice(
-                        ethers.parseUnits("1.1", 18), currentStartTime - 1n, ONE_MINUTE
+                        ethers.parseUnits("1.1", 18), past, ONE_MINUTE
                     )
-                )
-                    .to.be.revertedWithCustomError(proToken, ERRORS.StaleSegment)
-                    .withArgs(currentStartTime - 1n, currentStartTime);
+                ).to.be.revertedWithCustomError(proToken, ERRORS.StartTimeInPast);
             });
-            it("accepts startTime exactly equal to a flat (period = 0) segment's own startTime — its end coincides with its start", async function () {
+            it("accepts startTime exactly equal to block.timestamp (boundary passes)", async function () {
                 const { proToken, accounts } = await loadFixture(proTokenFixture);
                 await skipInitialCooldown();
-                const [, , currentStartTime] = await proToken.getUSDPriceSegment();
-                // Bootstrap segment has period == 0, so startTime + period == startTime;
-                // an incoming segment starting at that same instant does not overlap.
+                const latestBefore = await time.latest();
+                // The tx mines one second after the last query, per Hardhat's
+                // default auto-mine behaviour — matches the boundary exactly.
+                const startTime = latestBefore + 1;
                 await proToken.connect(accounts.priceOperator).updateUSDPrice(
-                    ethers.parseUnits("1.1", 18), currentStartTime, ONE_MINUTE
+                    ethers.parseUnits("1.1", 18), startTime, ONE_MINUTE
                 );
-                expect((await proToken.getUSDPriceSegment())[2]).to.equal(currentStartTime);
+                expect((await proToken.getUSDPriceSegment())[2]).to.equal(BigInt(startTime));
             });
-            it("reverts StaleSegment when startTime falls strictly inside an active (non-flat) ramp — segments can never overlap", async function () {
+            it("reverts StartTimeTooFarInFuture when startTime exceeds block.timestamp + maxStartTimeAhead", async function () {
+                const { proToken, accounts } = await loadFixture(proTokenFixture);
+                await skipInitialCooldown();
+                const max = await proToken.getMaxStartTimeAhead();
+                const tooFar = (await time.latest()) + 1 + Number(max) + 1;
+                await expect(
+                    proToken.connect(accounts.priceOperator).updateUSDPrice(
+                        ethers.parseUnits("1.1", 18), tooFar, ONE_MINUTE
+                    )
+                ).to.be.revertedWithCustomError(proToken, ERRORS.StartTimeTooFarInFuture);
+            });
+            it("accepts startTime exactly at block.timestamp + maxStartTimeAhead (boundary passes)", async function () {
+                const { proToken, accounts } = await loadFixture(proTokenFixture);
+                await skipInitialCooldown();
+                const max = await proToken.getMaxStartTimeAhead();
+                const latestBefore = await time.latest();
+                const startTime = latestBefore + 1 + Number(max);
+                await proToken.connect(accounts.priceOperator).updateUSDPrice(
+                    ethers.parseUnits("1.1", 18), startTime, ONE_MINUTE
+                );
+                expect((await proToken.getUSDPriceSegment())[2]).to.equal(BigInt(startTime));
+            });
+            it("reverts SegmentInProgress when called while the current (non-flat) ramp is still active", async function () {
                 const { proToken, accounts } = await loadFixture(proTokenFixture);
                 await skipInitialCooldown();
                 const period = 1000;
@@ -725,49 +760,49 @@ describe("ProToken", function () {
                 await proToken.connect(accounts.priceOperator).updateUSDPrice(
                     ethers.parseUnits("1.5", 18), priorStart, period
                 );
+                // No time advance — the ramp opened above is still running. A
+                // second call reverts SegmentInProgress even though its own
+                // _startTime (priorEnd, further out) would otherwise be valid.
                 const priorEnd = priorStart + period;
                 await expect(
                     proToken.connect(accounts.priceOperator).updateUSDPrice(
-                        ethers.parseUnits("1.6", 18), priorEnd - 1, ONE_MINUTE
+                        ethers.parseUnits("1.6", 18), priorEnd, ONE_MINUTE
                     )
-                )
-                    .to.be.revertedWithCustomError(proToken, ERRORS.StaleSegment)
-                    .withArgs(priorEnd - 1, priorStart);
+                ).to.be.revertedWithCustomError(proToken, ERRORS.SegmentInProgress);
             });
-            it("accepts startTime exactly at the end of the previous (non-flat) segment (boundary passes, no overlap)", async function () {
+            it("accepts a new update once the previous (non-flat) segment has fully settled (boundary passes, no overlap)", async function () {
                 const { proToken, accounts } = await loadFixture(proTokenFixture);
                 await skipInitialCooldown();
-                await proToken.connect(accounts.admin).setPriceUpdateCooldown(0); // isolate the overlap boundary from the 23h cooldown
+                await proToken.connect(accounts.admin).setPriceUpdateCooldown(0); // isolate the boundary from the 23h cooldown
                 const period = 1000;
                 const priorStart = (await time.latest()) + 1;
                 await proToken.connect(accounts.priceOperator).updateUSDPrice(
                     ethers.parseUnits("1.5", 18), priorStart, period
                 );
                 const priorEnd = priorStart + period;
+                // Advance to one second short so the call itself (which mines one
+                // second later, per Hardhat's default auto-mine) lands exactly at
+                // priorEnd — the SegmentInProgress boundary (block.timestamp ==
+                // startTime + period) — with _startTime == block.timestamp too.
+                await time.increaseTo(priorEnd - 1);
                 await proToken.connect(accounts.priceOperator).updateUSDPrice(
                     ethers.parseUnits("1.6", 18), priorEnd, ONE_MINUTE
                 );
                 expect((await proToken.getUSDPriceSegment())[2]).to.equal(BigInt(priorEnd));
             });
-            it("reverts StaleSegment against a segment written by admin's setUSDPrice, not just a prior updateUSDPrice", async function () {
-                // The replay/overlap guard reads the single shared startTime/period
-                // slots regardless of which function last wrote them.
+            it("operator can call updateUSDPrice immediately after admin's setUSDPrice — flat segments settle instantly, no SegmentInProgress lockout", async function () {
+                // setUSDPrice always writes period = 0, so its segment's own end
+                // coincides with its start: SegmentInProgress (block.timestamp <
+                // startTime + period) can never hold for it once the admin's own
+                // tx has mined, regardless of how soon the operator follows up.
                 const { proToken, accounts } = await loadFixture(proTokenFixture);
+                await proToken.connect(accounts.admin).setPriceUpdateCooldown(0); // isolate from the cooldown so the call is genuinely immediate
                 await proToken.connect(accounts.admin).setUSDPrice(ethers.parseUnits("1.3", 18));
-                const [, , adminStartTime] = await proToken.getUSDPriceSegment();
-                await skipInitialCooldown();
-                await expect(
-                    proToken.connect(accounts.priceOperator).updateUSDPrice(
-                        ethers.parseUnits("1.4", 18), adminStartTime - 1n, ONE_MINUTE
-                    )
-                )
-                    .to.be.revertedWithCustomError(proToken, ERRORS.StaleSegment)
-                    .withArgs(adminStartTime - 1n, adminStartTime);
-                // setUSDPrice's segment is flat (period 0), so startTime itself
-                // (its own end) is a valid boundary for the next segment too.
+                const startTime = (await time.latest()) + 1;
                 await proToken.connect(accounts.priceOperator).updateUSDPrice(
-                    ethers.parseUnits("1.4", 18), adminStartTime, ONE_MINUTE
+                    ethers.parseUnits("1.4", 18), startTime, ONE_MINUTE
                 );
+                expect((await proToken.getUSDPriceSegment())[2]).to.equal(BigInt(startTime));
             });
             it("InvalidPrice takes precedence over InvalidRampPeriod when both _price and _period are invalid", async function () {
                 const { proToken, accounts } = await loadFixture(proTokenFixture);
@@ -1015,7 +1050,7 @@ describe("ProToken", function () {
             expect(seg[2]).to.equal(BigInt(startTime));
             expect(seg[3]).to.equal(BigInt(PERIOD));
         });
-        it("reverts StaleSegment on a mid-ramp update attempt — segments can never overlap", async function () {
+        it("reverts SegmentInProgress on a mid-ramp update attempt — segments can never overlap", async function () {
             const { proToken, accounts } = await loadFixture(proTokenFixture);
             await skipInitialCooldown();
             // The 23h cooldown would otherwise block a second update while
@@ -1036,7 +1071,7 @@ describe("ProToken", function () {
                 proToken.connect(accounts.priceOperator).updateUSDPrice(
                     ethers.parseUnits("2.5", 18), startTime2, PERIOD
                 )
-            ).to.be.revertedWithCustomError(proToken, ERRORS.StaleSegment);
+            ).to.be.revertedWithCustomError(proToken, ERRORS.SegmentInProgress);
             // Once the first segment fully settles, a new one is accepted normally.
             await time.increaseTo(startTime1 + PERIOD);
             const startTime3 = (await time.latest()) + 1;
@@ -1202,6 +1237,68 @@ describe("ProToken", function () {
             const { proToken, accounts } = await loadFixture(proTokenFixture);
             await expect(
                 proToken.connect(accounts.attacker).setPriceUpdateCooldown(ONE_HOUR)
+            ).to.be.revertedWithCustomError(proToken, ERRORS.NotAdmin);
+        });
+    });
+    // =======================================================================
+    // setMaxStartTimeAhead
+    // =======================================================================
+    describe("setMaxStartTimeAhead()", function () {
+        const TWENTY_MINUTES = 20 * 60;
+        const ONE_HOUR = 60 * 60;
+        it("default value is DEFAULT_MAX_START_TIME_AHEAD (20 minutes)", async function () {
+            const { proToken } = await loadFixture(proTokenFixture);
+            expect(await proToken.DEFAULT_MAX_START_TIME_AHEAD()).to.equal(BigInt(TWENTY_MINUTES));
+            expect(await proToken.getMaxStartTimeAhead()).to.equal(BigInt(TWENTY_MINUTES));
+        });
+        it("admin can change the bound (getter reflects it)", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await proToken.connect(accounts.admin).setMaxStartTimeAhead(ONE_HOUR);
+            expect(await proToken.getMaxStartTimeAhead()).to.equal(BigInt(ONE_HOUR));
+        });
+        it("emits MaxStartTimeAheadChanged(prev, new)", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await expect(proToken.connect(accounts.admin).setMaxStartTimeAhead(ONE_HOUR))
+                .to.emit(proToken, EVENTS.MaxStartTimeAheadChanged)
+                .withArgs(BigInt(TWENTY_MINUTES), BigInt(ONE_HOUR));
+        });
+        it("a widened bound immediately permits a further-out startTime", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await skipInitialCooldown();
+            await proToken.connect(accounts.admin).setMaxStartTimeAhead(ONE_HOUR);
+            const startTime = (await time.latest()) + 1 + TWENTY_MINUTES + 1; // beyond the old 20-min bound
+            await proToken.connect(accounts.priceOperator).updateUSDPrice(
+                ethers.parseUnits("1.1", 18), startTime, ONE_MINUTE
+            );
+            expect((await proToken.getUSDPriceSegment())[2]).to.equal(BigInt(startTime));
+        });
+        it("a tightened bound immediately rejects a startTime the old bound would have allowed", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await skipInitialCooldown();
+            await proToken.connect(accounts.admin).setMaxStartTimeAhead(60); // 1 minute
+            const startTime = (await time.latest()) + 1 + TWENTY_MINUTES; // fine under the old 20-min default
+            await expect(
+                proToken.connect(accounts.priceOperator).updateUSDPrice(
+                    ethers.parseUnits("1.1", 18), startTime, ONE_MINUTE
+                )
+            ).to.be.revertedWithCustomError(proToken, ERRORS.StartTimeTooFarInFuture);
+        });
+        it("reverts when called by operator", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await expect(
+                proToken.connect(accounts.operator).setMaxStartTimeAhead(ONE_HOUR)
+            ).to.be.revertedWithCustomError(proToken, ERRORS.NotAdmin);
+        });
+        it("reverts when called by priceOperator (cannot loosen own constraint)", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await expect(
+                proToken.connect(accounts.priceOperator).setMaxStartTimeAhead(ONE_HOUR)
+            ).to.be.revertedWithCustomError(proToken, ERRORS.NotAdmin);
+        });
+        it("reverts when called by random attacker", async function () {
+            const { proToken, accounts } = await loadFixture(proTokenFixture);
+            await expect(
+                proToken.connect(accounts.attacker).setMaxStartTimeAhead(ONE_HOUR)
             ).to.be.revertedWithCustomError(proToken, ERRORS.NotAdmin);
         });
     });

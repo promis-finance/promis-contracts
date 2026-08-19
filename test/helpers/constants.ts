@@ -152,7 +152,9 @@ export const ERRORS = {
     PriceStepSizeExceeded: "PriceStepSizeExceeded",
     PriceUpdateCooldownActive: "PriceUpdateCooldownActive",
     InvalidRampPeriod: "InvalidRampPeriod",
-    StaleSegment: "StaleSegment",
+    SegmentInProgress: "SegmentInProgress",
+    StartTimeInPast: "StartTimeInPast",
+    StartTimeTooFarInFuture: "StartTimeTooFarInFuture",
 
     // ERC20 (OZ v5)
     ERC20InvalidReceiver: "ERC20InvalidReceiver",
@@ -243,6 +245,7 @@ export const EVENTS = {
     StepSizeChanged: "StepSizeChanged",
     PriceOperatorSet: "PriceOperatorSet",
     PriceUpdateCooldownChanged: "PriceUpdateCooldownChanged",
+    MaxStartTimeAheadChanged: "MaxStartTimeAheadChanged",
 
     // OZ ERC20
     Transfer:      "Transfer",

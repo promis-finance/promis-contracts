@@ -35,11 +35,28 @@ interface IProToken {
     ///         step size
     /// @dev Only callable by the price operator. `_price` must be normalized to 18 decimals and
     ///      >= 1e18 (minimum 1 USD). Reverts USDPriceDisabled if the price is currently 0.
-    ///      `_period` must fall within [MIN_RAMP_PERIOD, MAX_RAMP_PERIOD]. `_startTime` must be
-    ///      `>=` the current segment's own end (startTime + period) — not merely after its
-    ///      start — or reverts StaleSegment; segments can never overlap, so this also protects
-    ///      against reordered/replayed calls. For a flat segment (period == 0), the end
-    ///      coincides with the start, so a new segment may begin at that same instant.
+    ///      `_period` must fall within [MIN_RAMP_PERIOD, MAX_RAMP_PERIOD]. Segments can never
+    ///      overlap — this falls out of two independent checks rather than a direct comparison
+    ///      against the current segment's end:
+    ///        1. The call is rejected outright while the current segment is still ramping
+    ///           (block.timestamp < startTime + period), reverting SegmentInProgress —
+    ///           otherwise the price would immediately jump to the old segment's futurePrice
+    ///           and freeze there until _startTime is reached. updateUSDPrice is only ever
+    ///           callable once the previous segment has fully settled in wall-clock time.
+    ///        2. _startTime must be >= block.timestamp, reverting StartTimeInPast otherwise — a
+    ///           backdated _startTime is never valid, so part of the ramp can never be silently
+    ///           skipped.
+    ///      Together these force _startTime >= the current segment's own end as a corollary, so
+    ///      a new segment always starts from the previous one's completed futurePrice, never
+    ///      from a mid-ramp jump. For a flat segment (period == 0), the end coincides with the
+    ///      start, so a new segment may begin at that same instant.
+    ///
+    ///      _startTime is also capped at block.timestamp + maxStartTimeAhead (reverts
+    ///      StartTimeTooFarInFuture, admin-tunable via setMaxStartTimeAhead, default
+    ///      DEFAULT_MAX_START_TIME_AHEAD) so a mis-submitted segment can't freeze the price
+    ///      indefinitely. The oracle computes _startTime as now-plus-buffer, wide enough to
+    ///      cover the slowest chain's confirmation lag; a chain that misses even that buffer
+    ///      simply reverts and gets resubmitted.
     ///
     ///      The new segment's inPrice is not a caller-supplied value — it's set automatically to
     ///      the *previous* segment's futurePrice, so `_price`, `_startTime`, and `_period` are
@@ -65,6 +82,13 @@ interface IProToken {
     /// @dev Only callable by admin.
     /// @param _cooldown The new cooldown
     function setPriceUpdateCooldown(uint256 _cooldown) external;
+
+    /// @notice Sets the max distance _startTime may be ahead of block.timestamp in updateUSDPrice
+    /// @dev Only callable by admin. Bounds how far a segment can be scheduled ahead, so a
+    ///      mis-submitted _startTime can't freeze the price indefinitely (reverts
+    ///      StartTimeTooFarInFuture beyond it).
+    /// @param _maxStartTimeAhead The new bound, in seconds
+    function setMaxStartTimeAhead(uint256 _maxStartTimeAhead) external;
 
     // ================================================
     // =========== Owner External Functions ===========
@@ -147,6 +171,11 @@ interface IProToken {
     /// @param newCd The new USD price change cooldown
     event PriceUpdateCooldownChanged(uint256 prevCd, uint256 newCd);
 
+    /// @notice Emitted when the max start-time-ahead bound was set by admin
+    /// @param prevValue The old bound, in seconds
+    /// @param newValue The new bound, in seconds
+    event MaxStartTimeAheadChanged(uint256 prevValue, uint256 newValue);
+
     // ================================================
     // ==================== Errors ====================
     // ================================================
@@ -187,7 +216,14 @@ interface IProToken {
     /// @dev An invalid ramp period is provided (outside [MIN_RAMP_PERIOD, MAX_RAMP_PERIOD])
     error InvalidRampPeriod();
 
-    /// @dev An incoming segment's startTime falls before the current segment's own end
-    ///      (startTime + period) — segments can never overlap
-    error StaleSegment(uint64 incomingStartTime, uint64 currentStartTime);
+    /// @dev updateUSDPrice was called before the current segment finished ramping
+    ///      (block.timestamp < startTime + period) — would otherwise jump the price straight
+    ///      to the old segment's futurePrice and freeze it there until the new _startTime
+    error SegmentInProgress(uint64 currentSegmentEnd, uint256 blockTimestamp);
+
+    /// @dev _startTime is before block.timestamp — backdating is never allowed
+    error StartTimeInPast(uint64 startTime, uint256 blockTimestamp);
+
+    /// @dev _startTime is further ahead of block.timestamp than maxStartTimeAhead allows
+    error StartTimeTooFarInFuture(uint64 startTime, uint256 blockTimestamp);
 }

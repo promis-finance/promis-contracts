@@ -34,6 +34,11 @@ contract ProToken is
     /// @notice Default minimum interval between operator price updates.
     uint256 public constant DEFAULT_PRICE_UPDATE_COOLDOWN = 23 hours;
 
+    /// @notice Default maximum distance `_startTime` may be ahead of block.timestamp in
+    ///         updateUSDPrice, wide enough for cross-chain confirmation lag but short enough
+    ///         that a mis-submitted segment can't freeze the price for long.
+    uint256 public constant DEFAULT_MAX_START_TIME_AHEAD = 20 minutes;
+
     /// @notice Minimum allowed ramp duration for updateUSDPrice segments.
     uint256 public constant MIN_RAMP_PERIOD = 1 minutes;
 
@@ -65,6 +70,9 @@ contract ProToken is
 
     /// @notice Minimum interval between operator price updates (0 disables the cooldown).
     uint256 private priceUpdateCooldown;
+
+    /// @notice Maximum distance `_startTime` may be ahead of block.timestamp in updateUSDPrice.
+    uint256 private maxStartTimeAhead;
 
     /// @notice Timestamp of the last operator price update (updateUSDPrice).
     uint256 private lastPriceUpdateAt;
@@ -111,12 +119,14 @@ contract ProToken is
         period = 0;
 
         priceUpdateCooldown = DEFAULT_PRICE_UPDATE_COOLDOWN;
+        maxStartTimeAhead = DEFAULT_MAX_START_TIME_AHEAD;
 
         lastPriceUpdateAt = block.timestamp;
 
         emit MinterSet(address(0), _minter);
         emit USDPriceSet(0, DEFAULT_USD_PRICE);
         emit PriceUpdateCooldownChanged(0, DEFAULT_PRICE_UPDATE_COOLDOWN);
+        emit MaxStartTimeAheadChanged(0, DEFAULT_MAX_START_TIME_AHEAD);
     }
 
     /// @notice Restricts access to the admin.
@@ -197,15 +207,32 @@ contract ProToken is
     ///      the segment-shape guarantee (`futurePrice >= inPrice` always holds) — there's no
     ///      separate `inPrice` input that could disagree with them.
     ///
-    ///      Segments can never overlap: `_startTime` must be `>=` the current segment's own end
-    ///      (`startTime + period`), not merely greater than its start — reverts StaleSegment
-    ///      otherwise. This is a strict generalization of replay/reordering protection (a
-    ///      replayed or reordered `_startTime` is always `< startTime + period` too) and it
-    ///      means a new segment always starts from the previous one's completed `futurePrice`,
-    ///      never from a mid-ramp jump — `inPrice` reflects a fully-settled prior price, always.
-    ///      For a flat segment (`period == 0`, i.e. right after the bootstrap state or a
-    ///      `setUSDPrice` call), the end coincides with the start, so a new segment may begin
-    ///      at that same instant. `_period` must fall within [MIN_RAMP_PERIOD, MAX_RAMP_PERIOD].
+    ///      Segments can never overlap, so a new segment always starts from the previous one's
+    ///      completed `futurePrice`, never from a mid-ramp jump — `inPrice` reflects a
+    ///      fully-settled prior price, always. This falls out of two independent checks rather
+    ///      than a single explicit "no overlap" comparison:
+    ///        1. SegmentInProgress: the call itself is rejected while the current segment is
+    ///           still ramping (`block.timestamp < startTime + period`) — otherwise the call
+    ///           would immediately collapse `_currentPrice()` to the old segment's `futurePrice`
+    ///           for the gap until `_startTime` is reached, a visible jump-then-freeze.
+    ///           `updateUSDPrice` is only ever callable once the previous segment has fully
+    ///           settled in wall-clock time, i.e. once `block.timestamp >= startTime + period`.
+    ///        2. StartTimeInPast: `_startTime` must be `>= block.timestamp`.
+    ///      Together these force `_startTime >= startTime + period` (the current segment's own
+    ///      end) as a corollary, without needing to check it directly — no overlap, no replay of
+    ///      a stale `_startTime`, ever. For a flat segment (`period == 0`), its end coincides
+    ///      with its start, so a new segment may begin at that same instant. `_period` must fall
+    ///      within [MIN_RAMP_PERIOD, MAX_RAMP_PERIOD].
+    ///
+    ///      A backdated `_startTime` is never valid (StartTimeInPast) — there's no ambiguity
+    ///      between "part of the ramp already elapsed" and "the whole ramp was skipped"; the
+    ///      oracle always computes `_startTime` as now-plus-buffer, wide enough to cover the
+    ///      slowest chain's confirmation lag, and a chain that misses even that buffer simply
+    ///      reverts and gets resubmitted. `_startTime` is also capped at
+    ///      `block.timestamp + maxStartTimeAhead` (reverts StartTimeTooFarInFuture, admin-tunable
+    ///      via setMaxStartTimeAhead, default DEFAULT_MAX_START_TIME_AHEAD) so a mis-submitted
+    ///      segment can't freeze the price indefinitely — the next update must itself start at or
+    ///      after `_startTime + _period`.
     function updateUSDPrice(
         uint256 _price,
         uint64 _startTime,
@@ -213,7 +240,15 @@ contract ProToken is
     ) external override onlyPriceOperator {
         if (_price < MIN_USD_PRICE && _price != 0) revert InvalidPrice();
         if (_period < MIN_RAMP_PERIOD || _period > MAX_RAMP_PERIOD) revert InvalidRampPeriod();
-        if (_startTime < startTime + period) revert StaleSegment(_startTime, startTime);
+
+        if (_startTime < block.timestamp) revert StartTimeInPast(_startTime, block.timestamp);
+        if (uint256(_startTime) > block.timestamp + maxStartTimeAhead) {
+            revert StartTimeTooFarInFuture(_startTime, block.timestamp);
+        }
+
+        if (block.timestamp < startTime + period) {
+            revert SegmentInProgress(startTime + period, block.timestamp);
+        }
 
         uint256 availableAt = lastPriceUpdateAt + priceUpdateCooldown;
         if (block.timestamp < availableAt) {
@@ -255,6 +290,16 @@ contract ProToken is
         priceUpdateCooldown = _cooldown;
 
         emit PriceUpdateCooldownChanged(old, _cooldown);
+    }
+
+    /// @inheritdoc IProToken
+    /// @dev Only callable by the admin. Bounds how far ahead of block.timestamp `_startTime`
+    ///      may be set in updateUSDPrice (reverts StartTimeTooFarInFuture beyond it).
+    function setMaxStartTimeAhead(uint256 _maxStartTimeAhead) external override onlyAdmin {
+        uint256 old = maxStartTimeAhead;
+        maxStartTimeAhead = _maxStartTimeAhead;
+
+        emit MaxStartTimeAheadChanged(old, _maxStartTimeAhead);
     }
 
     /// @inheritdoc IProToken
@@ -316,6 +361,11 @@ contract ProToken is
     /// @notice Returns the current price update cooldown in seconds.
     function getPriceUpdateCooldown() external view returns (uint256) {
         return priceUpdateCooldown;
+    }
+
+    /// @notice Returns the current max start-time-ahead bound (seconds) for updateUSDPrice.
+    function getMaxStartTimeAhead() external view returns (uint256) {
+        return maxStartTimeAhead;
     }
 
     /// @notice Returns the timestamp of the last operator price update.
