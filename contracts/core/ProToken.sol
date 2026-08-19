@@ -233,6 +233,16 @@ contract ProToken is
     ///      via setMaxStartTimeAhead, default DEFAULT_MAX_START_TIME_AHEAD) so a mis-submitted
     ///      segment can't freeze the price indefinitely — the next update must itself start at or
     ///      after `_startTime + _period`.
+    ///
+    ///      Note on update cadence: `_period` sets not only the ramp length but also the
+    ///      minimum time until the *next* update is permitted. SegmentInProgress blocks any
+    ///      new segment until `startTime + _period` has elapsed, so the effective gap between
+    ///      updates is `max(priceUpdateCooldown, _period)`, not the cooldown alone. A long
+    ///      `_period` (up to MAX_RAMP_PERIOD, 7 days) therefore extends the lockout well beyond
+    ///      the 23-hour cooldown — the operator must size `_period` with the intended update
+    ///      frequency in mind, since the current segment must fully settle before the next
+    ///      begins. The admin's setUSDPrice remains available to override a segment early
+    ///      (flat, immediate) if a shorter-than-`_period` correction is needed.
     function updateUSDPrice(
         uint256 _price,
         uint64 _startTime,
@@ -296,6 +306,9 @@ contract ProToken is
     /// @dev Only callable by the admin. Bounds how far ahead of block.timestamp `_startTime`
     ///      may be set in updateUSDPrice (reverts StartTimeTooFarInFuture beyond it).
     function setMaxStartTimeAhead(uint256 _maxStartTimeAhead) external override onlyAdmin {
+        if (_maxStartTimeAhead < MIN_RAMP_PERIOD || _maxStartTimeAhead > MAX_RAMP_PERIOD) {
+            revert InvalidMaxStartTimeAhead(_maxStartTimeAhead);
+        }
         uint256 old = maxStartTimeAhead;
         maxStartTimeAhead = _maxStartTimeAhead;
 

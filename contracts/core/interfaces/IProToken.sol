@@ -207,6 +207,9 @@ interface IProToken {
     /// @dev A price with exceeding step size was provided
     error PriceStepSizeExceeded();
     
+    /// @dev Emitted when '_maxStartTimeAhead' exceeds ramp periods
+    error InvalidMaxStartTimeAhead(uint256 value);
+    
     /// @dev Zero amount is provided for mint/burn operations
     error InvalidAmount();
     
