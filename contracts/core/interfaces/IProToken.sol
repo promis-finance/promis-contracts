@@ -39,7 +39,7 @@ interface IProToken {
     /// @param _stepSize The USD price step size in 18 decimal format
     function setStepSize(uint256 _stepSize) external;
 
-    /// @notice Sets the cooldown for USD price update
+    /// @notice Sets the cooldown for USD price update. Does not reset running cooldown.
     /// @dev Only callable by admin.
     /// @param _cooldown The new cooldown
     function setPriceUpdateCooldown(uint256 _cooldown) external;
@@ -59,6 +59,23 @@ interface IProToken {
     /// @param bridgeMinter The bridge contract address
     /// @param allowed True to authorize, false to revoke
     function setBridgeMinter(address bridgeMinter, bool allowed) external;
+
+    
+    /// @notice Pauses/unpauses BRIDGE burns (outbound). When paused, bridge minters
+    ///         cannot burn, so no new outbound bridge transfers can start. The primary
+    ///         minter is unaffected. Use alone for a planned, graceful shutdown: new
+    ///         outbound flow stops while inbound in-flight messages still complete.
+    /// @param _paused New paused state.
+    function setBridgeBurnPaused(bool _paused) external;
+
+    /// @notice Pauses/unpauses BRIDGE mints (inbound). When paused, bridge minters
+    ///         cannot mint, blocking in-flight destination messages from completing;
+    ///         those messages remain pending/retryable in CCIP and can be executed
+    ///         after unpausing (may require manual re-execution). The primary minter
+    ///         is unaffected. Combine with setBridgeBurnPaused(true) for a full
+    ///         emergency halt of all bridge activity.
+    /// @param _paused New paused state.
+    function setBridgeMintPaused(bool _paused) external;
 
     // ================================================
     // ================ View functions ================
@@ -82,6 +99,12 @@ interface IProToken {
     
     /// @notice Returns true if bridge "account" is approved minter
     function isBridgeMinter(address account) external view returns (bool);
+
+    /// @notice Returns whether bridge burns (outbound) are paused.
+    function isBridgeBurnPaused() external view returns (bool);
+
+    /// @notice Returns whether bridge mints (inbound) are paused.
+    function isBridgeMintPaused() external view returns (bool);
 
     // ================================================
     // ==================== Events ====================
@@ -159,4 +182,10 @@ interface IProToken {
     
     /// @dev USD price is disabled
     error USDPriceDisabled();
+
+    /// @dev Bridge burning is paused
+    error BridgeBurnPaused();
+
+    /// @dev Bridge minting is paused
+    error BridgeMintPaused();
 }
