@@ -23,38 +23,16 @@ interface IProToken {
     /// @param amount The amount of tokens to burn
     function burn(address from, uint256 amount) external;
 
-    /// @notice Sets the USD price of the pro token arbitrarily, effective immediately
-    /// @dev Only callable by the admin. Price must be normalized to 18 decimals and >= 1e18
-    ///      (minimum 1 USD), or 0 to disable the feed. Applied as a flat, zero-length segment
-    ///      (no ramp) — the admin's manual-correction/emergency-override escape hatch.
+    /// @notice Sets the USD price of the pro token arbitrarily
+    /// @dev Only callable by the admin. Price must be normalized to 18 decimals and >= 1e18 (minimum 1 USD).
     /// @param _price The USD price in 18 decimal format (e.g., 1.5 USD = 1500000000000000000)
     function setUSDPrice(uint256 _price) external;
 
-    /// @notice Ramps the USD price of the pro token linearly to `_price` over `_period` seconds
-    ///         starting at `_startTime`, subject to only increasing value and conforming to
-    ///         step size
-    /// @dev Only callable by the price operator. `_price` must be normalized to 18 decimals and
-    ///      >= 1e18 (minimum 1 USD). Reverts USDPriceDisabled if the price is currently 0.
-    ///      `_period` must fall within [MIN_RAMP_PERIOD, MAX_RAMP_PERIOD]. `_startTime` must be
-    ///      `>=` the current segment's own end (startTime + period) — not merely after its
-    ///      start — or reverts StaleSegment; segments can never overlap, so this also protects
-    ///      against reordered/replayed calls. For a flat segment (period == 0), the end
-    ///      coincides with the start, so a new segment may begin at that same instant.
-    ///
-    ///      The new segment's inPrice is not a caller-supplied value — it's set automatically to
-    ///      the *previous* segment's futurePrice, so `_price`, `_startTime`, and `_period` are
-    ///      the only values that need to be identical across chains for getUSDPrice() to ramp
-    ///      along the same curve everywhere: every chain that has applied the same sequence of
-    ///      updates derives the identical inPrice locally. The same monotonicity/step-size
-    ///      checks that gate `_price` guarantee futurePrice >= inPrice for every segment.
-    /// @param _price The price the segment ramps to, in 18 decimal format
-    /// @param _startTime The unix timestamp the segment starts ramping from
-    /// @param _period The ramp duration, in seconds
-    function updateUSDPrice(
-        uint256 _price,
-        uint64 _startTime,
-        uint64 _period
-    ) external;
+    /// @notice Sets the USD price of the pro token: subject to only increasing value and conforming to step size
+    /// @dev Only callable by the price operator. Price must be normalized to 18 decimals and >= 1e18 (minimum 1 USD).
+    ///      Reverts USDPriceDisabled if the price is currently 0.
+    /// @param _price The USD price in 18 decimal format (e.g., 1.5 USD = 1500000000000000000)
+    function updateUSDPrice(uint256 _price) external;
 
     /// @notice Sets the step size for USD price update
     /// @dev Only callable by admin.
@@ -89,9 +67,7 @@ interface IProToken {
     /// @notice Returns the address of the current minter
     function getMinter() external view returns (address);
 
-    /// @notice Returns the current interpolated USD price of the pro token
-    /// @dev Pure function of the active segment and block.timestamp; reverts USDPriceDisabled
-    ///      if the feed is currently disabled (futurePrice == 0, see setUSDPrice).
+    /// @notice Returns the current USD price of the pro token
     /// @return The USD price in 18 decimal format
     function getUSDPrice() external view returns (uint256);
 
@@ -183,11 +159,4 @@ interface IProToken {
     
     /// @dev USD price is disabled
     error USDPriceDisabled();
-
-    /// @dev An invalid ramp period is provided (outside [MIN_RAMP_PERIOD, MAX_RAMP_PERIOD])
-    error InvalidRampPeriod();
-
-    /// @dev An incoming segment's startTime falls before the current segment's own end
-    ///      (startTime + period) — segments can never overlap
-    error StaleSegment(uint64 incomingStartTime, uint64 currentStartTime);
 }

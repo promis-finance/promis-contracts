@@ -311,6 +311,12 @@
         "internalType": "uint256",
         "name": "amount",
         "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256[]",
+        "name": "unlockedPositionsToMerge",
+        "type": "uint256[]"
       }
     ],
     "name": "DepositRequestCreated",
@@ -348,6 +354,12 @@
         "internalType": "uint256",
         "name": "amount",
         "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256[]",
+        "name": "unlockedPositionsToMerge",
+        "type": "uint256[]"
       },
       {
         "indexed": false,
@@ -655,6 +667,12 @@
         "internalType": "uint256[]",
         "name": "positionIDs",
         "type": "uint256[]"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256[]",
+        "name": "unlockedPositionsToMerge",
+        "type": "uint256[]"
       }
     ],
     "name": "WithdrawRequestCreated",
@@ -679,6 +697,12 @@
         "indexed": false,
         "internalType": "uint256[]",
         "name": "positionIDs",
+        "type": "uint256[]"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256[]",
+        "name": "unlockedPositionsToMerge",
         "type": "uint256[]"
       },
       {
@@ -830,6 +854,11 @@
         "internalType": "uint256[]",
         "name": "unbondingIndices",
         "type": "uint256[]"
+      },
+      {
+        "internalType": "uint256[]",
+        "name": "unlockedPositionsToMerge",
+        "type": "uint256[]"
       }
     ],
     "name": "executeCompleteWithdraw",
@@ -853,6 +882,11 @@
         "internalType": "uint256",
         "name": "_amount",
         "type": "uint256"
+      },
+      {
+        "internalType": "uint256[]",
+        "name": "_unlockedPositionsToMerge",
+        "type": "uint256[]"
       }
     ],
     "name": "executeCreateDepositRequest",
@@ -870,6 +904,11 @@
       {
         "internalType": "uint256[]",
         "name": "_positionIDs",
+        "type": "uint256[]"
+      },
+      {
+        "internalType": "uint256[]",
+        "name": "_unlockedPositionsToMerge",
         "type": "uint256[]"
       }
     ],
@@ -977,6 +1016,11 @@
         "internalType": "uint8",
         "name": "toTierId",
         "type": "uint8"
+      },
+      {
+        "internalType": "uint256[]",
+        "name": "unlockedPositionsToMerge",
+        "type": "uint256[]"
       }
     ],
     "name": "executeRelock",

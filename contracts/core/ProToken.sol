@@ -34,31 +34,14 @@ contract ProToken is
     /// @notice Default minimum interval between operator price updates.
     uint256 public constant DEFAULT_PRICE_UPDATE_COOLDOWN = 23 hours;
 
-    /// @notice Minimum allowed ramp duration for updateUSDPrice segments.
-    uint256 public constant MIN_RAMP_PERIOD = 1 minutes;
-
-    /// @notice Maximum allowed ramp duration for updateUSDPrice segments.
-    uint256 public constant MAX_RAMP_PERIOD = 7 days;
-
     /// @notice ProTokenSettings contract, source of admin/operator roles.
     address private proTokenSettings;
 
     /// @notice Address authorized to mint and burn (typically ProTokenOperations).
     address private minter;
 
-    /// @notice Price (WAD, 18 decimals) at the start of the current segment.
-    uint256 private inPrice;
-
-    /// @notice Price (WAD, 18 decimals) at the end of the current segment;
-    ///         0 means disabled (getUSDPrice reverts).
-    uint256 private futurePrice;
-
-    /// @notice Unix timestamp the current segment started at.
-    uint64 private startTime;
-
-    /// @notice Ramp duration of the current segment, in seconds; 0 = flat/instant
-    ///         segment (used for the bootstrap state and for admin's setUSDPrice).
-    uint64 private period;
+    /// @notice USD price, 18 decimals; 0 means disabled (getUSDPrice reverts).
+    uint256 private usdPrice;
 
     /// @notice Increase step size of USD price allowed (0 means steps disabled).
     uint256 private stepSize;
@@ -102,14 +85,7 @@ contract ProToken is
 
         minter = _minter;
         proTokenSettings = _proTokenSettings;
-
-        // Bootstrap segment: the one place a zero-length (flat) segment is
-        // written directly, rather than through updateUSDPrice.
-        inPrice = DEFAULT_USD_PRICE;
-        futurePrice = DEFAULT_USD_PRICE;
-        startTime = uint64(block.timestamp);
-        period = 0;
-
+        usdPrice = DEFAULT_USD_PRICE;
         priceUpdateCooldown = DEFAULT_PRICE_UPDATE_COOLDOWN;
 
         lastPriceUpdateAt = block.timestamp;
@@ -162,20 +138,11 @@ contract ProToken is
     }
 
     /// @inheritdoc IProToken
-    /// @dev Admin's arbitrary override ("manual correction, emergency override"): applied
-    ///      as a flat, zero-length segment (`period = 0`) so it takes effect in the
-    ///      same block, exactly like the old instant-set behaviour. Setting `_price == 0`
-    ///      disables the feed; `futurePrice == 0` is what `getUSDPrice`/`updateUSDPrice`
-    ///      check to detect that state.
     function setUSDPrice(uint256 _price) external override onlyAdmin {
         if (_price < MIN_USD_PRICE && _price != 0) revert InvalidPrice();
 
-        uint256 old = _currentPrice();
-
-        inPrice = _price;
-        futurePrice = _price;
-        startTime = uint64(block.timestamp);
-        period = 0;
+        uint256 old = usdPrice;
+        usdPrice = _price;
 
         lastPriceUpdateAt = block.timestamp;
 
@@ -183,53 +150,21 @@ contract ProToken is
     }
 
     /// @inheritdoc IProToken
-    /// @dev Linear on-chain price interpolation, oracle-driven multichain segment. The oracle
-    ///      computes one `(_price, _startTime, _period)` tuple off-chain and submits the
-    ///      identical calldata to every chain, so `getUSDPrice()` ramps along the exact same
-    ///      curve everywhere regardless of each chain's own confirmation timing.
-    ///
-    ///      The new segment's `inPrice` is not a caller-supplied value — it's set automatically
-    ///      to the *previous* segment's `futurePrice`. That previous `futurePrice` was itself
-    ///      written by an earlier identical cross-chain call (all the way back to the
-    ///      constructor's bootstrap price), so every chain that has applied the same sequence of
-    ///      updates derives the identical `inPrice` locally, with nothing left to trust from the
-    ///      caller. The same monotonicity/step-size checks that gate `_price` do double duty as
-    ///      the segment-shape guarantee (`futurePrice >= inPrice` always holds) — there's no
-    ///      separate `inPrice` input that could disagree with them.
-    ///
-    ///      Segments can never overlap: `_startTime` must be `>=` the current segment's own end
-    ///      (`startTime + period`), not merely greater than its start — reverts StaleSegment
-    ///      otherwise. This is a strict generalization of replay/reordering protection (a
-    ///      replayed or reordered `_startTime` is always `< startTime + period` too) and it
-    ///      means a new segment always starts from the previous one's completed `futurePrice`,
-    ///      never from a mid-ramp jump — `inPrice` reflects a fully-settled prior price, always.
-    ///      For a flat segment (`period == 0`, i.e. right after the bootstrap state or a
-    ///      `setUSDPrice` call), the end coincides with the start, so a new segment may begin
-    ///      at that same instant. `_period` must fall within [MIN_RAMP_PERIOD, MAX_RAMP_PERIOD].
-    function updateUSDPrice(
-        uint256 _price,
-        uint64 _startTime,
-        uint64 _period
-    ) external override onlyPriceOperator {
+    function updateUSDPrice(uint256 _price) external override onlyPriceOperator {
         if (_price < MIN_USD_PRICE && _price != 0) revert InvalidPrice();
-        if (_period < MIN_RAMP_PERIOD || _period > MAX_RAMP_PERIOD) revert InvalidRampPeriod();
-        if (_startTime < startTime + period) revert StaleSegment(_startTime, startTime);
 
         uint256 availableAt = lastPriceUpdateAt + priceUpdateCooldown;
         if (block.timestamp < availableAt) {
             revert PriceUpdateCooldownActive(availableAt, block.timestamp);
         }
 
-        uint256 old = futurePrice;
+        uint256 old = usdPrice;
+
         if (old == 0) revert USDPriceDisabled();
         if (_price <= old) revert PriceNotIncreasing();
         if (stepSize != 0 && _price - old > stepSize) revert PriceStepSizeExceeded();
 
-        inPrice = old;
-        futurePrice = _price;
-        startTime = _startTime;
-        period = _period;
-
+        usdPrice = _price;
         lastPriceUpdateAt = block.timestamp;
 
         emit USDPriceUpdated(old, _price);
@@ -279,38 +214,9 @@ contract ProToken is
     }
 
     /// @inheritdoc IProToken
-    /// @dev Pure function of the current segment and block.timestamp; no accumulator, no
-    ///      crank. Reverts if the feed has been disabled via setUSDPrice(0).
     function getUSDPrice() external view override returns (uint256) {
-        if (futurePrice == 0) revert USDPriceDisabled();
-        return _currentPrice();
-    }
-
-    /// @notice Current interpolated price (WAD, 1e18) for the active segment, with no
-    ///         disabled-check. Guards the `block.timestamp < startTime` underflow a naive
-    ///         `block.timestamp - startTime` formula would have. Every stored segment has
-    ///         `futurePrice >= inPrice` (enforced at updateUSDPrice ingestion; setUSDPrice and
-    ///         the bootstrap segment are always flat, `inPrice == futurePrice`), so the curve is
-    ///         monotonically non-decreasing and needs only one branch for the ramp itself.
-    function _currentPrice() private view returns (uint256) {
-        if (block.timestamp <= startTime) return inPrice;
-
-        uint256 endTime = startTime + period;
-        if (block.timestamp >= endTime) return futurePrice;
-
-        uint256 elapsed = block.timestamp - startTime;
-        return inPrice + (futurePrice - inPrice) * elapsed / period;
-    }
-
-    /// @notice Returns the raw active segment, for consumers that need the full curve, e.g.
-    ///         to read `futurePrice` without waiting for the ramp to finish.
-    function getUSDPriceSegment() external view returns (
-        uint256 _inPrice,
-        uint256 _futurePrice,
-        uint64  _startTime,
-        uint64  _period
-    ) {
-        return (inPrice, futurePrice, startTime, period);
+        if (usdPrice == 0) revert USDPriceDisabled();
+        return usdPrice;
     }
 
     /// @notice Returns the current price update cooldown in seconds.

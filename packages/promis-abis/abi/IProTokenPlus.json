@@ -49,16 +49,6 @@
   },
   {
     "inputs": [],
-    "name": "EmptyTierName",
-    "type": "error"
-  },
-  {
-    "inputs": [],
-    "name": "FloorTierNotDepositable",
-    "type": "error"
-  },
-  {
-    "inputs": [],
     "name": "ImpossibleState",
     "type": "error"
   },
@@ -292,6 +282,12 @@
         "internalType": "uint256",
         "name": "amount",
         "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256[]",
+        "name": "unlockedPositionsToMerge",
+        "type": "uint256[]"
       }
     ],
     "name": "DepositRequestCreated",
@@ -329,6 +325,12 @@
         "internalType": "uint256",
         "name": "amount",
         "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256[]",
+        "name": "unlockedPositionsToMerge",
+        "type": "uint256[]"
       },
       {
         "indexed": false,
@@ -474,6 +476,67 @@
       }
     ],
     "name": "PositionDeactivated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "user",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "uint256",
+        "name": "newPositionId",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "oldPositionId",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "oldPositionAmount",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "addedAmount",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "totalAmount",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint8",
+        "name": "lockedTierId",
+        "type": "uint8"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint64",
+        "name": "oldPositionLockExpiry",
+        "type": "uint64"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint64",
+        "name": "newExpiry",
+        "type": "uint64"
+      }
+    ],
+    "name": "PositionMerged",
     "type": "event"
   },
   {
@@ -766,6 +829,12 @@
         "internalType": "uint256[]",
         "name": "positionIDs",
         "type": "uint256[]"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256[]",
+        "name": "unlockedPositionsToMerge",
+        "type": "uint256[]"
       }
     ],
     "name": "WithdrawRequestCreated",
@@ -790,6 +859,12 @@
         "indexed": false,
         "internalType": "uint256[]",
         "name": "positionIDs",
+        "type": "uint256[]"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256[]",
+        "name": "unlockedPositionsToMerge",
         "type": "uint256[]"
       },
       {
@@ -883,6 +958,11 @@
         "internalType": "uint256[]",
         "name": "unbondingIndices",
         "type": "uint256[]"
+      },
+      {
+        "internalType": "uint256[]",
+        "name": "unlockedPositionsToMerge",
+        "type": "uint256[]"
       }
     ],
     "name": "completeWithdraw",
@@ -901,6 +981,11 @@
         "internalType": "uint256",
         "name": "amount",
         "type": "uint256"
+      },
+      {
+        "internalType": "uint256[]",
+        "name": "unlockedPositionsToMerge",
+        "type": "uint256[]"
       }
     ],
     "name": "createDepositRequest",
@@ -913,6 +998,11 @@
       {
         "internalType": "uint256[]",
         "name": "positionIDs",
+        "type": "uint256[]"
+      },
+      {
+        "internalType": "uint256[]",
+        "name": "unlockedPositionsToMerge",
         "type": "uint256[]"
       }
     ],
@@ -1299,6 +1389,11 @@
         "internalType": "uint8",
         "name": "toTierId",
         "type": "uint8"
+      },
+      {
+        "internalType": "uint256[]",
+        "name": "unlockedPositionsToMerge",
+        "type": "uint256[]"
       }
     ],
     "name": "relock",

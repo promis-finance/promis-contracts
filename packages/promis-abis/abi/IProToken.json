@@ -11,11 +11,6 @@
   },
   {
     "inputs": [],
-    "name": "InvalidRampPeriod",
-    "type": "error"
-  },
-  {
-    "inputs": [],
     "name": "NotAdmin",
     "type": "error"
   },
@@ -61,22 +56,6 @@
     "type": "error"
   },
   {
-    "inputs": [
-      {
-        "internalType": "uint64",
-        "name": "incomingStartTime",
-        "type": "uint64"
-      },
-      {
-        "internalType": "uint64",
-        "name": "currentStartTime",
-        "type": "uint64"
-      }
-    ],
-    "name": "StaleSegment",
-    "type": "error"
-  },
-  {
     "inputs": [],
     "name": "USDPriceDisabled",
     "type": "error"
@@ -100,12 +79,6 @@
         "internalType": "uint256",
         "name": "amount",
         "type": "uint256"
-      },
-      {
-        "indexed": true,
-        "internalType": "address",
-        "name": "burner",
-        "type": "address"
       }
     ],
     "name": "Burned",
@@ -125,12 +98,6 @@
         "internalType": "uint256",
         "name": "amount",
         "type": "uint256"
-      },
-      {
-        "indexed": true,
-        "internalType": "address",
-        "name": "minter",
-        "type": "address"
       }
     ],
     "name": "Minted",
@@ -251,19 +218,6 @@
   },
   {
     "inputs": [],
-    "name": "getCCIPAdmin",
-    "outputs": [
-      {
-        "internalType": "address",
-        "name": "",
-        "type": "address"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
     "name": "getMinter",
     "outputs": [
       {
@@ -305,25 +259,6 @@
     "inputs": [
       {
         "internalType": "address",
-        "name": "account",
-        "type": "address"
-      }
-    ],
-    "name": "isBridgeMinter",
-    "outputs": [
-      {
-        "internalType": "bool",
-        "name": "",
-        "type": "bool"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "address",
         "name": "to",
         "type": "address"
       },
@@ -334,24 +269,6 @@
       }
     ],
     "name": "mint",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "address",
-        "name": "bridgeMinter",
-        "type": "address"
-      },
-      {
-        "internalType": "bool",
-        "name": "allowed",
-        "type": "bool"
-      }
-    ],
-    "name": "setBridgeMinter",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
@@ -414,16 +331,6 @@
         "internalType": "uint256",
         "name": "_price",
         "type": "uint256"
-      },
-      {
-        "internalType": "uint64",
-        "name": "_startTime",
-        "type": "uint64"
-      },
-      {
-        "internalType": "uint64",
-        "name": "_period",
-        "type": "uint64"
       }
     ],
     "name": "updateUSDPrice",
