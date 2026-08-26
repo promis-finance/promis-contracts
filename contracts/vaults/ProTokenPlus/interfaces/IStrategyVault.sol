@@ -236,8 +236,8 @@ interface IStrategyVault {
     /// @return claimed Amount of proUSD sent to yieldRecipient
     function claimYield(uint256 amount) external returns (uint256 claimed);
 
-    /// @notice Admin-only: withdraw accrued proUSD appreciation yield.
-    /// @dev Only admin. Settles first to capture appreciation up to the current price,
+    /// @notice Admin-only or Operator: withdraw accrued proUSD appreciation yield.
+    /// @dev Only admin/operator. Settles first to capture appreciation up to the current price,
     ///      then pays from yieldProUSD — never from depositProUSD, so user
     ///      obligations are untouched. Passing 0 or an amount >= banked withdraws all.
     /// @param to Recipient of the yield proUSD

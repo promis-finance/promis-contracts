@@ -131,6 +131,7 @@ export const ERRORS = {
     NotEnabled: "NotEnabled",
     PausedInSettings: "PausedInSettings",
     GreaterThanAllowed: "GreaterThanAllowed",
+    BalanceUnverifiable: "BalanceUnverifiable",
     
     // ---- Pausable (OZ v5) ----
     EnforcedPause: "EnforcedPause",
@@ -263,7 +264,8 @@ export const EVENTS = {
     UnmintYAssetsUpdated: "UnmintYAssetsUpdated",
     OracleAggregationSettingsSet: "OracleAggregationSettingsSet",
     StrategyVaultSet: "StrategyVaultSet",
-
+    YAssetRemovedUnverified: "YAssetRemovedUnverified",
+    
     // ---- Pausable (OZ v5) ----
     Paused:                       "Paused",
     Unpaused:                     "Unpaused",

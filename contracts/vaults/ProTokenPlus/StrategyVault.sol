@@ -78,6 +78,9 @@ contract StrategyVault is
         // Seed the yield ratchet so the first settlement banks only appreciation. 
         // Tolerant of disabled price at deploy time: first live settlement seeds it.
         lastPrice = _tryGetPrice();
+
+        emit ProTokenPlusSet(address(0), _proTokenPlus);
+        emit ProTokenOperationsSet(address(0), proTokenInfo.proTokenOperations);
     }
 
     // ================================================
@@ -145,14 +148,11 @@ contract StrategyVault is
 
         // --- Backing pool: appreciation above what depositBase requires ---
         if (depositProUSD > 0 && depositBase > 0) {
-            uint256 backingNeededLast = (depositBase * USD_PRECISION) / lastPrice;
             uint256 backingNeededNow = (depositBase * USD_PRECISION) / currentPrice;
-
-            uint256 freedBacking = backingNeededLast > backingNeededNow
-                ? backingNeededLast - backingNeededNow
+            uint256 freedBacking = depositProUSD > backingNeededNow
+                ? depositProUSD - backingNeededNow
                 : 0;
-            if (freedBacking > depositProUSD) freedBacking = depositProUSD;
-
+                
             if (freedBacking > 0) {
                 depositProUSD -= freedBacking;
                 totalFreed += freedBacking;
@@ -161,13 +161,10 @@ contract StrategyVault is
 
         // --- Withdraw reserve: appreciation above what withdrawBase requires ---
         if (withdrawProUSD > 0 && withdrawBase > 0) {
-            uint256 reserveNeededLast = (withdrawBase * USD_PRECISION) / lastPrice;
             uint256 reserveNeededNow = (withdrawBase * USD_PRECISION) / currentPrice;
-
-            uint256 freedReserve = reserveNeededLast > reserveNeededNow
-                ? reserveNeededLast - reserveNeededNow
+            uint256 freedReserve = withdrawProUSD > reserveNeededNow
+                ? withdrawProUSD - reserveNeededNow
                 : 0;
-            if (freedReserve > withdrawProUSD) freedReserve = withdrawProUSD;
 
             if (freedReserve > 0) {
                 withdrawProUSD -= freedReserve;
@@ -363,7 +360,9 @@ contract StrategyVault is
         
         // Derive the USD worth of what was minted, at the current (just-settled) price.
         // This is the reserve obligation the minted tokens cover.
-        uint256 usdAmount = (proUSDMinted * lastPrice) / USD_PRECISION;
+        uint256 live = _tryGetPrice();
+        if (live == 0) revert PriceUnavailable();
+        uint256 usdAmount = (proUSDMinted * live) / USD_PRECISION;
 
         // Feed the SEGREGATED reserve, not backing. withdrawBase tracks the USD target;
         // withdrawProUSD holds the minted tokens earmarked for user exits.
@@ -549,30 +548,20 @@ contract StrategyVault is
     /// @inheritdoc IStrategyVault
     function claimableGrowth() public view override returns (uint256) {
         uint256 currentPrice = _tryGetPrice();
-        if (currentPrice <= lastPrice || lastPrice == 0) {
+        if (currentPrice == 0 || lastPrice == 0 || currentPrice <= lastPrice) {
             return growthProUSD; // nothing new to bank
         }
-
         uint256 pending = 0;
-
-        // Backing pool: appreciation above what depositBase requires.
+        // Backing pool: EXCESS over current requirement (matches _accrueGrowth).
         if (depositProUSD > 0 && depositBase > 0) {
-            uint256 needLast = (depositBase * USD_PRECISION) / lastPrice;
             uint256 needNow = (depositBase * USD_PRECISION) / currentPrice;
-            uint256 freed = needLast > needNow ? needLast - needNow : 0;
-            if (freed > depositProUSD) freed = depositProUSD;
-            pending += freed;
+            if (depositProUSD > needNow) pending += depositProUSD - needNow;
         }
-
-        // Withdraw reserve: appreciation above what withdrawBase requires.
+        // Withdraw reserve: EXCESS over current requirement.
         if (withdrawProUSD > 0 && withdrawBase > 0) {
-            uint256 needLast = (withdrawBase * USD_PRECISION) / lastPrice;
             uint256 needNow = (withdrawBase * USD_PRECISION) / currentPrice;
-            uint256 freed = needLast > needNow ? needLast - needNow : 0;
-            if (freed > withdrawProUSD) freed = withdrawProUSD;
-            pending += freed;
+            if (withdrawProUSD > needNow) pending += withdrawProUSD - needNow;
         }
-
         return growthProUSD + pending;
     }
 

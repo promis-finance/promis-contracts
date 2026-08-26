@@ -144,6 +144,8 @@ contract MockYieldProtocolHandler is IYieldProtocolHandler {
         return yieldAsset;
     }
 
+    function acceptsAllocation() external override view returns (bool) { return true; }
+
     /**
      * @notice Fund the mock with tokens
      * @param amount The amount to fund

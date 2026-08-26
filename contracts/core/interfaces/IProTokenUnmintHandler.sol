@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Proprietary
 pragma solidity 0.8.29;
-pragma abicoder v2;
 
 import "../types/ProTokenUnmintHandlerTypes.sol";
 

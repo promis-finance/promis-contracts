@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Proprietary
 pragma solidity 0.8.29;
-pragma abicoder v2;
 
 import "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
@@ -49,10 +48,10 @@ contract ProTokenPlusOperations is
     uint256 public constant VERSION = 1_00_00;
     uint256 constant SECONDS_PER_YEAR = 365 days;
     bytes32 constant DEPOSIT_PROOF_TYPEHASH = keccak256(
-        "DepositProof(uint256 requestId,uint8 tierID,uint256 amount,address user,uint256[] unlockedPositionsToMerge,uint256 deadline,uint8 proofKind)"
+        "DepositProof(uint256 requestId,uint8 tierID,uint256 amount,address user,uint256 deadline,uint8 proofKind)"
     );
     bytes32 constant WITHDRAW_PROOF_TYPEHASH = keccak256(
-        "WithdrawProof(uint256 requestId,uint256[] positionIDs,address user,uint256[] unlockedPositionsToMerge,uint256 deadline,uint8 proofKind)"
+        "WithdrawProof(uint256 requestId,uint256[] positionIDs,address user,uint256 deadline,uint8 proofKind)"
     );
 
     // ================================================
@@ -86,11 +85,10 @@ contract ProTokenPlusOperations is
     function executeCreateDepositRequest(
         address _caller, 
         uint8 _tierID, 
-        uint256 _amount, 
-        uint256[] calldata _unlockedPositionsToMerge
+        uint256 _amount
     ) external override onlyDelegatecall {
         if (_caller != msg.sender) revert CallerMismatch();
-        if (_amount == 0) revert IProTokenPlus.ZeroAmount();
+        if (_amount == 0) revert IProTokenPlus.ZeroAmount();        
 
         IERC20(proUSD).safeTransferFrom(
             msg.sender,
@@ -99,6 +97,9 @@ contract ProTokenPlusOperations is
         );
 
         ProTokenPlusTypes.TierConfig storage tier = tiers[_tierID];
+        if (!tier.isActive) revert IProTokenPlus.TierError(_tierID);
+        if (!tier.isDepositable) revert IProTokenPlus.TierError(_tierID);
+        
         uint256 _min = _convertToBase(_amount);
         if (tier.minDeposit > 0 && _min < tier.minDeposit) revert IProTokenPlus.BelowMinDeposit(_min, tier.minDeposit);
         
@@ -109,12 +110,11 @@ contract ProTokenPlusOperations is
             tierID: _tierID,
             amount: _amount,
             user: _caller,
-            unlockedPositionsToMerge: _unlockedPositionsToMerge,
 
             status: ProTokenPlusTypes.Status.PENDING
         });
 
-        emit IProTokenPlus.DepositRequestCreated(requestID, _caller, _tierID, _amount, _unlockedPositionsToMerge);
+        emit IProTokenPlus.DepositRequestCreated(requestID, _caller, _tierID, _amount);
     }
 
     /// @inheritdoc IProTokenPlusOperations
@@ -138,7 +138,6 @@ contract ProTokenPlusOperations is
                 request.tierID,
                 request.amount,
                 request.user,
-                keccak256(abi.encodePacked(request.unlockedPositionsToMerge)),
                 _deadline,
                 uint8(_proofKind)
             )
@@ -153,9 +152,6 @@ contract ProTokenPlusOperations is
         
 
         if (_proofKind == ProTokenPlusTypes.ProofKind.PROOF_OF_APPROVE) {
-            // Merge unlocked positions if provided (aggregates before main action)
-            _mergeUnlockedIfProvided(request.user, request.unlockedPositionsToMerge);
-            
             positionID = _executeDeposit(
                 request.user, request.tierID, request.amount
             );
@@ -166,7 +162,7 @@ contract ProTokenPlusOperations is
             );
         } else revert IProTokenPlus.InvalidProofKind();
 
-        emit IProTokenPlus.DepositRequestFinalized(_requestID, request.user, positionID, request.tierID, request.amount, request.unlockedPositionsToMerge, uint8(_proofKind));
+        emit IProTokenPlus.DepositRequestFinalized(_requestID, request.user, positionID, request.tierID, request.amount, uint8(_proofKind));
     }
 
     function _executeDeposit(
@@ -203,8 +199,7 @@ contract ProTokenPlusOperations is
     /// @inheritdoc IProTokenPlusOperations
     function executeCreateWithdrawRequest(
         address _caller,
-        uint256[] calldata _positionIDs,
-        uint256[] calldata _unlockedPositionsToMerge
+        uint256[] calldata _positionIDs
     ) external override onlyDelegatecall {
         if (_caller != msg.sender) revert CallerMismatch();
         if (_positionIDs.length == 0) revert IProTokenPlus.EmptyPositionArray();
@@ -231,11 +226,10 @@ contract ProTokenPlusOperations is
         withdrawRequests[requestID] = ProTokenPlusTypes.WithdrawRequest({
             positionIDs: _positionIDs,
             user: _caller,
-            unlockedPositionsToMerge: _unlockedPositionsToMerge,
             status: ProTokenPlusTypes.Status.PENDING
         });
 
-        emit IProTokenPlus.WithdrawRequestCreated(requestID, _caller, _positionIDs, _unlockedPositionsToMerge);
+        emit IProTokenPlus.WithdrawRequestCreated(requestID, _caller, _positionIDs);
     }
 
     /// @inheritdoc IProTokenPlusOperations
@@ -260,7 +254,6 @@ contract ProTokenPlusOperations is
                 _requestID,
                 keccak256(abi.encodePacked(request.positionIDs)),
                 request.user,
-                keccak256(abi.encodePacked(request.unlockedPositionsToMerge)),
                 _deadline,
                 uint8(_proofKind)
             )
@@ -271,19 +264,15 @@ contract ProTokenPlusOperations is
 
         request.status = ProTokenPlusTypes.Status.EXECUTED;
 
-        unbondingIndex = _executeInitiateWithdraw(request.user, request.positionIDs, request.unlockedPositionsToMerge);
+        unbondingIndex = _executeInitiateWithdraw(request.user, request.positionIDs);
 
-        emit IProTokenPlus.WithdrawRequestFinalized(_requestID, request.user, request.positionIDs, request.unlockedPositionsToMerge, uint8(_proofKind));
+        emit IProTokenPlus.WithdrawRequestFinalized(_requestID, request.user, request.positionIDs, uint8(_proofKind));
     }
 
     function _executeInitiateWithdraw(
         address caller,
-        uint256[] memory positionIds,
-        uint256[] memory unlockedPositionsToMerge
+        uint256[] memory positionIds
     ) internal returns (uint256 unbondingIndex) {
-        // Merge unlocked positions if provided (aggregates before main action)
-        _mergeUnlockedIfProvided(caller, unlockedPositionsToMerge);
-
         // Calculate total available and validate all positions
         uint256 totalAvailable;
 
@@ -350,13 +339,9 @@ contract ProTokenPlusOperations is
     /// @inheritdoc IProTokenPlusOperations
     function executeCompleteWithdraw(
         address caller,
-        uint256[] calldata unbondingIndices,
-        uint256[] calldata unlockedPositionsToMerge
+        uint256[] calldata unbondingIndices
     ) external onlyDelegatecall {
         if (caller != msg.sender) revert CallerMismatch();
-
-        // Merge unlocked positions if provided (aggregates before main action)
-        _mergeUnlockedIfProvided(caller, unlockedPositionsToMerge);
 
         if (unbondingIndices.length == 0)
             revert IProTokenPlus.EmptyPositionArray();
@@ -370,7 +355,7 @@ contract ProTokenPlusOperations is
 
             if (!request.isActive)
                 revert IProTokenPlus.UnbondingNotFound(unbondingIndex);
-            if (block.timestamp < request.unbondingEnd) {
+            if (unbondingPeriod != 0 && block.timestamp < request.unbondingEnd) {
                 revert IProTokenPlus.UnbondingNotComplete(request.unbondingEnd);
             }
 
@@ -402,13 +387,9 @@ contract ProTokenPlusOperations is
         address caller,
         uint256[] calldata positionIds,
         uint256 amount,
-        uint8 toTierId,
-        uint256[] calldata unlockedPositionsToMerge
+        uint8 toTierId
     ) external onlyDelegatecall returns (uint256 newPositionId) {
         if (caller != msg.sender) revert CallerMismatch();
-
-        // Merge unlocked positions if provided (aggregates before main action)
-        _mergeUnlockedIfProvided(caller, unlockedPositionsToMerge);
 
         if (amount == 0) revert IProTokenPlus.ZeroAmount();
         if (positionIds.length == 0) revert IProTokenPlus.EmptyPositionArray();
@@ -488,22 +469,7 @@ contract ProTokenPlusOperations is
         if (!auth) revert IProTokenPlus.InvalidAuthority();
     }
 
-    /// @notice Internal helper to merge unlocked positions if provided
-    /// @dev Called at the start of action functions to aggregate unlocked positions.
-    ///      Skips if fewer than 2 positions provided (nothing to merge).
-    /// @param caller The caller address
-    /// @param positionIds Array of unlocked position IDs to merge (can be empty or single)
-    /// @return newPositionId The ID of the newly created merged position, or 0 if no merge occurred
-    function _mergeUnlockedIfProvided(
-        address caller,
-        uint256[] memory positionIds
-    ) internal returns (uint256 newPositionId) {
-        if (positionIds.length < 2) return 0; // Need at least 2 to merge
-        return _executeUnlockedMerge(caller, positionIds);
-    }
-
     /// @notice Execute the unlocked merge logic
-    /// @dev Shared implementation used by both executeUnlockedMerge() and _mergeUnlockedIfProvided()
     /// @param caller The caller address
     /// @param positionIds Array of unlocked position IDs to merge
     /// @return newPositionId The ID of the newly created merged position
@@ -517,8 +483,9 @@ contract ProTokenPlusOperations is
         _detectDuplicatedPositionIds(positionIds);
 
         // Calculate total amount and validate all positions
-        uint256 totalAmount = 0;
-        uint8 tierId = 0;
+        uint256 totalAmount;
+        uint256 totalRewards;
+        uint8 tierId;
 
         for (uint256 i = 0; i < positionIds.length; i++) {
             uint256 posId = positionIds[i];
@@ -547,12 +514,12 @@ contract ProTokenPlusOperations is
                 );
             }
 
-            totalAmount += position.amount + position.lockedRewards;
+            totalAmount += position.amount;
+            totalRewards += position.lockedRewards;
         }
 
         // Deactivate all source positions
         for (uint256 i = 0; i < positionIds.length; i++) {
-            totalDepositsBase -= positions[positionIds[i]].amount;
             _deactivatePosition(
                 positionIds[i],
                 ProTokenPlusTypes.PositionStatus.UNLOCKED_MERGED
@@ -570,10 +537,8 @@ contract ProTokenPlusOperations is
             activeFromTimestamp: uint64(block.timestamp),
             activeToTimestamp: 0,
             status: ProTokenPlusTypes.PositionStatus.ACTIVE,
-            lockedRewards: 0
+            lockedRewards: totalRewards
         });
-
-        totalDepositsBase += totalAmount;
 
         // Add to active positions list
         _addToActivePositions(caller, newPositionId);
@@ -588,7 +553,7 @@ contract ProTokenPlusOperations is
             caller,
             newPositionId,
             mergedIds,
-            totalAmount,
+            totalAmount + totalRewards,
             tierId
         );
 

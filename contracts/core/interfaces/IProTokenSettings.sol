@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Proprietary
 pragma solidity 0.8.29;
-pragma abicoder v2;
 
 import "../types/ProTokenSettingsTypes.sol";
 import "../types/ProTokenOperationsTypes.sol";
@@ -60,6 +59,12 @@ interface IProTokenSettings {
      * @param _strategist Address of the new strategist
      */
     function setStrategist(address _strategist) external;
+
+    /**
+     * @notice Updates the bridgeAdmin address that ccip backend reads for token registration
+     * @param _bridgeAdmin Address of the new bridgeAdmin
+     */
+    function setBridgeAdmin(address _bridgeAdmin) external;
 
     /**
      * @notice Sets the address of the pro token operations contract
@@ -131,8 +136,9 @@ interface IProTokenSettings {
      *      and its yOperationsHandler must have 0 balance (no funds allocated).
      *      This is used to clean up y assets that are no longer used or were mistakenly configured.
      * @param _yAsset Address of the y asset to remove
+     * @param _forced A forced flag that lets admin remove yAssets with failed balance query
      */
-    function removeYAsset(address _yAsset) external;
+    function removeYAsset(address _yAsset, bool _forced) external;
 
     /**
      * @notice Sets status of an authority address for proofs acceptance
@@ -193,6 +199,15 @@ interface IProTokenSettings {
         external 
         view 
         returns (address strategist);
+
+    /**
+     * @notice Returns the current bridgeAdmin address for CCIP
+     * @return bridgeAdmin Address of the current bridgeAdmin
+     */
+    function getBridgeAdmin() 
+        external 
+        view 
+        returns (address bridgeAdmin);
 
     /**
      * @notice Returns the configured unmint y assets address
@@ -336,6 +351,13 @@ interface IProTokenSettings {
     event YAssetRemoved(address indexed yAsset);
 
     /**
+     * @notice Emitted when a y asset is removed from the registry with unverified handler balance
+     * @param yAsset Address of the y asset that was removed
+     * @param yOpsHandler Address of the operations handler for yAsset
+     */
+    event YAssetRemovedUnverified(address indexed yAsset, address indexed yOpsHandler);
+
+    /**
      * @notice Emitted when the unmint y asset is changed
      * @param oldAssets Address of the previous unmint y asset
      * @param newAssets Address of the new unmint y asset
@@ -389,6 +411,16 @@ interface IProTokenSettings {
     );
 
     /**
+     * @notice Emitted when the bridgeAdmin address is changed
+     * @param previousBridgeAdmin Address of the previous bridgeAdmin
+     * @param newBridgeAdmin Address of the new bridgeAdmin
+     */
+    event BridgeAdminSet(
+        address previousBridgeAdmin, 
+        address newBridgeAdmin
+    );
+
+    /**
      * @notice Emitted when an authority is set/unset for proofs
      * @dev This event tracks the time at which an authority status had a change
      * @param authority The address that creates proofs
@@ -426,5 +458,6 @@ interface IProTokenSettings {
     error YAssetNotFound(address yAsset);
     error YAssetInUseForUnmint(address yAsset);
     error YOperationsHandlerInUseBalanceNotZero();
+    error BalanceUnverifiable(address yAsset, address handler);
     error HandlerAssetMismatch();
 }

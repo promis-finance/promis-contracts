@@ -106,8 +106,6 @@ contract YAssetOperationsHandler is
             revert Unauthorized();
         }
 
-        emit YAssetsAllocated(_amount);
-
         _allocateToHandlers(_amount);
     }
 
@@ -116,7 +114,7 @@ contract YAssetOperationsHandler is
         address _handler,
         uint256 _amount
     ) external whenNotPaused {
-        if (_amount == 0) revert ZeroAmount();
+        if (_amount == 0 && _handler == address(0)) revert ZeroAmount();
 
         // Check what is the caller
         // External Business, operator and admin can ask yield Operations to withdrawal assets and transfer them to themselves
@@ -148,7 +146,7 @@ contract YAssetOperationsHandler is
             actualAmount = IYieldProtocolHandler(_handler).withdrawYieldAsset(
                 _amount
             );
-            if (actualAmount < _amount) revert WithdrawFailed();
+            if (_amount != 0 && actualAmount < _amount) revert WithdrawFailed();
         }
 
         IERC20(yAsset).safeTransfer(msg.sender, actualAmount);
@@ -184,7 +182,7 @@ contract YAssetOperationsHandler is
             address handler = _handlers[i];
             uint256 amount = _amounts[i];
 
-            if (amount == 0) revert ZeroAmount();
+            if (amount == 0 && handler == address(0)) revert ZeroAmount();
 
             uint256 actualAmount;
 
@@ -202,7 +200,7 @@ contract YAssetOperationsHandler is
 
                 actualAmount = IYieldProtocolHandler(handler)
                     .withdrawYieldAsset(amount);
-                if (actualAmount < amount) revert WithdrawFailed();
+                if (amount != 0 && actualAmount < amount) revert WithdrawFailed();
             }
 
             totalWithdrawn += actualAmount;
@@ -234,7 +232,7 @@ contract YAssetOperationsHandler is
         // 1. Use unallocated reserve held directly on this contract.
         uint256 unallocated = IERC20(yAsset).balanceOf(address(this));
         if (unallocated >= remaining) {
-            IERC20(yAsset).safeTransfer(to, amount);
+            _deliverOrThrow(to, amount);
             emit YAssetsPaidOut(to, amount);
             return amount;
         }
@@ -268,9 +266,67 @@ contract YAssetOperationsHandler is
         if (remaining > 0) revert InsufficientBalance();
         
         // 3. Everything is now on this contract; send the full amount out.
-        IERC20(yAsset).safeTransfer(to, amount);
+        _deliverOrThrow(to, amount);
         emit YAssetsPaidOut(to, amount);
         return amount;
+    }
+
+    /// @dev Non-reverting transfer that throws a DISTINCT error on delivery
+    ///      failure (e.g. blocklisted recipient), so callers can tell a
+    ///      delivery failure apart from a sourcing/liquidity failure.
+    function _deliverOrThrow(address to, uint256 amount) internal {
+        (bool ok, bytes memory ret) = yAsset.call(
+            abi.encodeWithSelector(IERC20.transfer.selector, to, amount)
+        );
+        // ERC20: success == call didn't revert AND (no return data OR returned true)
+        if (!ok || (ret.length != 0 && !abi.decode(ret, (bool)))) {
+            revert PayoutDeliveryFailed(to, amount);
+        }
+    }
+
+    /// @inheritdoc IYAssetOperationsHandler
+    function recordProtocolFee(address _yAsset, uint256 _amount) external {
+        IProTokenSettings s = IProTokenSettings(proTokenSettings);
+        if (msg.sender != s.getProTokenInfo().proTokenOperations)
+            revert Unauthorized();
+        if (_yAsset != yAsset) revert HandlerAssetMismatch(_yAsset);
+        accruedProtocolFees[_yAsset] += _amount;
+        emit UnmintFeeAccrued(_yAsset, _amount);
+    }
+
+    /// @inheritdoc IYAssetOperationsHandler
+    function collectFee(address _yAsset, address _to, uint256 _amount) external {
+        if (msg.sender != IProTokenSettings(proTokenSettings).getAdmin()) revert Unauthorized();
+        if (_to == address(0)) revert ZeroAddress();
+        if (_yAsset != yAsset) revert HandlerAssetMismatch(_yAsset);
+
+        uint256 owed = accruedProtocolFees[_yAsset];
+        if (_amount == 0) _amount = owed;
+        if (_amount > owed) revert CollectExceedsAccrued(_amount, owed);
+
+        accruedProtocolFees[_yAsset] = owed - _amount;
+
+        // Source the fee: idle first, then venues (accrual model — the fee tokens
+        // are wherever our yAsset happens to sit, not necessarily idle).
+        uint256 idle = IERC20(_yAsset).balanceOf(address(this));
+        if (idle < _amount) {
+            uint256 remaining = _amount - idle;
+            for (uint256 i = 0; i < protocolHandlers.length && remaining > 0; i++) {
+                address h = protocolHandlers[i].handlerContract;
+                if (h == address(0) || h.code.length == 0) continue;
+                uint256 bal;
+                try IYieldProtocolHandler(h).getBalance() returns (uint256 b) { bal = b; } catch { continue; }
+                if (bal == 0) continue;
+                uint256 toPull = bal >= remaining ? remaining : bal;
+                try IYieldProtocolHandler(h).withdrawYieldAsset(toPull) returns (uint256 got) {
+                    remaining -= got > toPull ? toPull : got;
+                } catch {}
+            }
+            if (remaining > 0) revert InsufficientBalance(); // total holdings < ledger: shouldn't happen unless a loss occurred
+        }
+
+        IERC20(_yAsset).safeTransfer(_to, _amount);
+        emit ProtocolFeesCollected(_yAsset, _to, _amount);
     }
     
     // ================================================
@@ -308,8 +364,9 @@ contract YAssetOperationsHandler is
     /// @inheritdoc IYAssetOperationsHandler
     function setYProtocolHandlers(
         address[] memory _handlers,
-        uint256[] memory _allocations
-    ) external onlyAdmin {
+        uint256[] memory _allocations,
+        bool _forced
+    ) external override onlyAdmin {
         if (_handlers.length != _allocations.length)
             revert ArrayLengthMismatch();
         if (_handlers.length == 0) revert NoHandlers();
@@ -328,7 +385,27 @@ contract YAssetOperationsHandler is
         uint256 oldLen = protocolHandlers.length;
         for (uint256 i = 0; i < oldLen; ) {
             address old = protocolHandlers[i].handlerContract;
-            if (old != address(0)) isProtocolHandler[old] = false;
+            if (old != address(0)) {
+                // Only enforce the balance policy on handlers genuinely leaving the set.
+                if (!_isInNewList(old, _handlers)) {
+                    (uint256 bal, bool verified) = _tryGetHandlerBalance(old);
+                    if (verified) {
+                        // Known balance: a funded handler must be drained first (it is still
+                        // registered here, so withdrawalYieldAssets works). forced does NOT
+                        // override a confirmed balance.
+                        if (bal > 0) revert HandlerHasBalance(old, bal);
+                        // verified zero → clean removal, no event.
+                    } else {
+                        // Unreadable: drain-first may be impossible (handler broken), so a
+                        // forced detachment is the escape hatch; recover via the handler's
+                        // own emergency path afterward.
+                        if (!_forced) revert HandlerBalanceUnverifiable(old);
+                        emit HandlerDetachedUnverified(old);
+                    }
+                }
+                // Handlers still in the new list: not a removal — no check, no event.
+                isProtocolHandler[old] = false;
+            }
             unchecked { ++i; }
         }
         delete protocolHandlers;
@@ -355,6 +432,30 @@ contract YAssetOperationsHandler is
         emit YProtocolHandlersSet(_handlers, _allocations);
     }
 
+    /// @dev True if `handler` appears in the new `handlers` array.
+    function _isInNewList(address handler, address[] memory handlers)
+        internal pure returns (bool)
+    {
+        for (uint256 i = 0; i < handlers.length; ) {
+            if (handlers[i] == handler) return true;
+            unchecked { ++i; }
+        }
+        return false;
+    }
+
+    /// @dev Reads a handler's balance without reverting; (balance, verified).
+    ///      verified == false when the handler has no code or getBalance() reverts.
+    function _tryGetHandlerBalance(address handler)
+        internal view returns (uint256 bal, bool verified)
+    {
+        if (handler.code.length == 0) return (0, false);
+        try IYieldProtocolHandler(handler).getBalance() returns (uint256 b) {
+            return (b, true);
+        } catch {
+            return (0, false);
+        }
+    }
+
     // ================================================
     // ================ View functions ================
     // ================================================
@@ -371,9 +472,11 @@ contract YAssetOperationsHandler is
         uint256 len = protocolHandlers.length;
         for (uint256 i = 0; i < len; ) {
             address h = protocolHandlers[i].handlerContract;
-            if (h != address(0)) {
-                available += IYieldProtocolHandler(h).getBalance();
-                if (available >= amount) return true;
+            if (h != address(0) && h.code.length != 0) {
+                try IYieldProtocolHandler(h).getBalance() returns (uint256 balance) {
+                    available += balance;
+                    if (available >= amount) return true;
+                } catch {}
             }
             unchecked { ++i; }
         }
@@ -397,6 +500,9 @@ contract YAssetOperationsHandler is
 
         // add the unallocated balance
         totalAmount += IERC20(yAsset).balanceOf(address(this));
+
+        uint256 fees = accruedProtocolFees[yAsset];
+        totalAmount = totalAmount > fees ? totalAmount - fees : 0;
 
         return (yAsset, totalAmount);
     }
@@ -435,28 +541,54 @@ contract YAssetOperationsHandler is
 
     function _allocateToHandlers(uint256 _amount) internal {
         if (_amount == 0) return;
-
         uint256 len = protocolHandlers.length;
         uint256 remainingAmount = _amount;
+
         for (uint256 i = 0; i < len; ) {
             YAssetOperationsHandlerTypes.YieldProtocolHandler storage handler = protocolHandlers[i];
+            address handlerAddr = handler.handlerContract;
+
+            // Skip venues that refuse allocation (e.g. impaired Aave reserve). Their
+            // share is NOT force-fed; it stays as idle backing on this contract —
+            // idle yAsset is fully-backed, just not yield-earning until the venue
+            // recovers or admin re-routes. This avoids a DoS where one venue's
+            // external deficit would otherwise revert the whole distribution
+            // (and, upstream, block minting).
+            bool accepts;
+            if (handlerAddr != address(0) && handlerAddr.code.length != 0) {
+                try IYieldProtocolHandler(handlerAddr).acceptsAllocation() returns (bool a) {
+                    accepts = a;
+                } catch {} // unreadable probe → don't route new capital there
+            }
 
             uint256 allocationAmount;
             if (i == len - 1) {
-                allocationAmount = remainingAmount;
+                allocationAmount = remainingAmount; // last handler mops up the remainder
             } else {
                 allocationAmount = (_amount * handler.allocationPercentage) / ALLOCATION_PRECISION;
                 remainingAmount -= allocationAmount;
             }
 
-            if (allocationAmount > 0) {
-                address handlerAddr = handler.handlerContract;
+            if (accepts && allocationAmount > 0) {
                 IERC20(yAsset).forceApprove(handlerAddr, allocationAmount);
-                IYieldProtocolHandler(handlerAddr).depositYieldAsset(allocationAmount);
-                emit YAssetsDistributed(handlerAddr, allocationAmount);
+                try IYieldProtocolHandler(handlerAddr).depositYieldAsset(allocationAmount) {
+                    emit YAssetsDistributed(handlerAddr, allocationAmount);
+                } catch {
+                    // Deposit reverted despite passing the probe → clear the approval and
+                    // leave this share as idle backing on this contract.
+                    IERC20(yAsset).forceApprove(handlerAddr, 0);
+                    emit AllocationSkipped(handlerAddr, allocationAmount);
+                }
+            } else if (!accepts && allocationAmount > 0) {
+                // Refused: leave this portion idle on the handler contract.
+                // (remainingAmount was already decremented for non-last handlers;
+                //  the tokens simply aren't forwarded — they stay in balanceOf(this).)
+                emit AllocationSkipped(handlerAddr, allocationAmount);
             }
             unchecked { ++i; }
         }
+
+        emit YAssetsAllocated(_amount);
     }
 
     function _authorizeUpgrade(

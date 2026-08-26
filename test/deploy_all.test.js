@@ -3,7 +3,6 @@ const { ethers, upgrades } = require("hardhat");
 
 // Proof validity window; wide enough for these sequential tests.
 const PROOF_TTL = 3n * 365n * 86400n; // 3 years
-
 async function futureDeadline(ttl = PROOF_TTL) {
     const block = await ethers.provider.getBlock("latest");
     return BigInt(block.timestamp) + ttl;
@@ -26,7 +25,6 @@ describe("Deployment", function () {
 
         // Mock Tokens
         console.log("----- Mock Tokens");
-
         const YAsset1 = await ethers.getContractFactory("MintableERC20", deployer);
         yAsset1 = await YAsset1.deploy("USDT", "USDT", 6);
         await yAsset1.waitForDeployment();
@@ -34,7 +32,6 @@ describe("Deployment", function () {
 
         // Contracts proUSD
         console.log("----- proUSD");
-
         const ProTokenSettings = await ethers.getContractFactory("ProTokenSettings", deployer);
         proTokenSettings = await upgrades.deployProxy(ProTokenSettings, [deployer.address, deployer.address, deployer.address], { kind: "uups" });
         await proTokenSettings.waitForDeployment();
@@ -62,7 +59,6 @@ describe("Deployment", function () {
 
         // Contracts proUSD+
         console.log("----- proUSD+");
-
         const tierIds = [1, 2];
         const tierConfigs = [
             [
@@ -95,7 +91,6 @@ describe("Deployment", function () {
 
         // Mock AaveV3
         console.log("----- Mock AaveV3");
-
         const MockAaveV3Pool = await ethers.getContractFactory("MockAaveV3", deployer);
         mockAaveV3Pool = await MockAaveV3Pool.deploy();
         await mockAaveV3Pool.waitForDeployment();
@@ -145,7 +140,6 @@ describe("Deployment", function () {
         );
         await strategyVault.waitForDeployment();
         console.log(`StrategyVault: ${await strategyVault.getAddress()}`);
-
         await (await proTokenSettings.setStrategyVault(await strategyVault.getAddress())).wait();
 
         // yAsset config — NOTE field order matches the packed YAssetSettings /
@@ -163,7 +157,6 @@ describe("Deployment", function () {
             unmintFeePer: ethers.parseUnits("0.001", 18), // 0.1%
             priceSettings: yAsset1PriceSettings,
         };
-
         await (await proTokenSettings.setYAsset(await yAsset1.getAddress(), yAsset1Settings)).wait();
         await (await proTokenSettings.setUnmintYAssets([await yAsset1.getAddress()])).wait();
         await (await proTokenSettings.setOracleAggregationSettings(1000)).wait();
@@ -176,14 +169,13 @@ describe("Deployment", function () {
         await (await proTokenPlus.setOperationsHandler(await proTokenPlusOperations.getAddress())).wait();
 
         // Yield routing + oracle mappings.
-        await (await yAssetOperationsHandler.setYProtocolHandlers([await aaveV3YieldHandler.getAddress()], [10000])).wait(); // 100%
+        await (await yAssetOperationsHandler.setYProtocolHandlers([await aaveV3YieldHandler.getAddress()], [10000], false)).wait(); // 100%
         await (await oracleAdaptor.setAssetToPushOracleMappings([await yAsset1.getAddress()], [await yAsset1Aggregator.getAddress()], [8])).wait();
 
         // Aave mock plumbing + yield pre-fund.
         await (await aToken.setPool(await mockAaveV3Pool.getAddress())).wait();
         await (await mockAaveV3Pool.setAToken(await yAsset1.getAddress(), await aToken.getAddress())).wait();
         await (await mockAaveV3Pool.setYieldRate(await yAsset1.getAddress(), 500)).wait(); // 5%
-
         const preFundAmount = ethers.parseUnits("10000000", 6);
         await (await yAsset1.mint(deployer.address, preFundAmount)).wait();
         await (await yAsset1.approve(await mockAaveV3Pool.getAddress(), preFundAmount)).wait();
@@ -211,7 +203,6 @@ describe("Deployment", function () {
         //         1000 USDT >> minDepositBase (100), so the floor passes.
         // -----------------------------------------------------------------
         console.log("----- proUSD: createMintRequest");
-
         const minMintOut = ethers.parseUnits("990", 18); // tolerate small slippage
         let tx = await proTokenOperations.connect(alice).createMintRequest(
             await yAsset1.getAddress(),
@@ -237,7 +228,6 @@ describe("Deployment", function () {
         //                   uint256 deadline,uint8 proofKind)
         // -----------------------------------------------------------------
         console.log("----- proUSD: sign PROOF_OF_APPROVE");
-
         const mintDomain = {
             name: "ProTokenOperations",
             version: "1",
@@ -273,7 +263,6 @@ describe("Deployment", function () {
         // Step 3: alice finalizes the mint with the signed proof.
         // -----------------------------------------------------------------
         console.log("----- proUSD: finalizeMintRequest");
-
         await (await proTokenOperations.connect(alice).finalizeMintRequest(
             mintRequestId,
             0, // PROOF_OF_APPROVE
@@ -304,17 +293,13 @@ describe("Deployment", function () {
         //         Tier 2 (Annual) has minDeposit 100 proUSD; we deposit 500.
         // -----------------------------------------------------------------
         console.log("----- proUSD+: createDepositRequest");
-
         const tierID = 2;                                    // Annual
         const depositAmount = ethers.parseUnits("500", 18);  // 500 proUSD
-        const unlockedPositionsToMerge = [];
-
         await (await proToken.connect(alice).approve(await proTokenPlus.getAddress(), depositAmount)).wait();
 
         let tx = await proTokenPlus.connect(alice).createDepositRequest(
             tierID,
             depositAmount,
-            unlockedPositionsToMerge,
         );
         let receipt = await tx.wait();
 
@@ -335,11 +320,9 @@ describe("Deployment", function () {
         // Step 2: authority signs PROOF_OF_APPROVE via EIP-712.
         //         Typehash must match ProTokenPlusOperations.DEPOSIT_PROOF_TYPEHASH:
         //         DepositProof(uint256 requestId,uint8 tierID,uint256 amount,
-        //                      address user,uint256[] unlockedPositionsToMerge,
-        //                      uint256 deadline,uint8 proofKind)
+        //                      address user,uint256 deadline,uint8 proofKind)
         // -----------------------------------------------------------------
         console.log("----- proUSD+: sign PROOF_OF_APPROVE");
-
         const depositDomain = {
             name: "ProTokenPlus",
             version: "1",
@@ -348,24 +331,22 @@ describe("Deployment", function () {
         };
         const depositTypes = {
             DepositProof: [
-                { name: "requestId",                type: "uint256" },
-                { name: "tierID",                   type: "uint8" },
-                { name: "amount",                   type: "uint256" },
-                { name: "user",                     type: "address" },
-                { name: "unlockedPositionsToMerge", type: "uint256[]" },
-                { name: "deadline",                 type: "uint256" },
-                { name: "proofKind",                type: "uint8" },
+                { name: "requestId",  type: "uint256" },
+                { name: "tierID",     type: "uint8" },
+                { name: "amount",     type: "uint256" },
+                { name: "user",       type: "address" },
+                { name: "deadline",   type: "uint256" },
+                { name: "proofKind",  type: "uint8" },
             ],
         };
         const depositDeadline = await futureDeadline();
         const depositValue = {
-            requestId:                depositRequestId,
-            tierID:                   tierID,
-            amount:                   depositAmount,
-            user:                     alice.address,
-            unlockedPositionsToMerge: unlockedPositionsToMerge,
-            deadline:                 depositDeadline,
-            proofKind:                0, // PROOF_OF_APPROVE
+            requestId:  depositRequestId,
+            tierID:     tierID,
+            amount:     depositAmount,
+            user:       alice.address,
+            deadline:   depositDeadline,
+            proofKind:  0, // PROOF_OF_APPROVE
         };
         const depositProof = await deployer.signTypedData(depositDomain, depositTypes, depositValue);
 
@@ -375,9 +356,7 @@ describe("Deployment", function () {
         //         and calls give(amount, worthBase).
         // -----------------------------------------------------------------
         console.log("----- proUSD+: finalizeDepositRequest");
-
         const vaultBefore = await proToken.balanceOf(await strategyVault.getAddress());
-
         await (await proTokenPlus.connect(alice).finalizeDepositRequest(
             depositRequestId,
             0, // PROOF_OF_APPROVE
@@ -389,7 +368,6 @@ describe("Deployment", function () {
         const [positionIds, totalCount] = await proTokenPlus.getUserPositionIds(alice.address, 0, 10, true);
         console.log(`  alice active positions: ${totalCount}`);
         expect(totalCount).to.equal(1n);
-
         const positionId = positionIds[0];
         const [posView] = await proTokenPlus.getUserPositions([positionId]);
         console.log(`  positionId: ${positionId}, lockedTierId: ${posView.lockedTierId}, lockExpiry: ${posView.lockExpiry}`);

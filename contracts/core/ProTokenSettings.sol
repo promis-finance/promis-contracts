@@ -46,6 +46,10 @@ contract ProTokenSettings is
         admin = _admin;
         operator = _operator;
         priceOperator = _priceOperator;
+
+        emit AdminAccepted(address(0), _admin);
+        emit OperatorSet(address(0), _operator);
+        emit PriceOperatorSet(address(0), _priceOperator);
     }
 
     modifier onlyAdmin() {
@@ -106,6 +110,15 @@ contract ProTokenSettings is
         address previousStrategist = strategist;
         strategist = _strategist;
         emit StrategistSet(previousStrategist, _strategist);
+    }
+
+    /// @inheritdoc IProTokenSettings
+    function setBridgeAdmin(
+        address _bridgeAdmin
+    ) external override onlyAdmin {
+        address previousBridgeAdmin = bridgeAdmin;
+        bridgeAdmin = _bridgeAdmin;
+        emit BridgeAdminSet(previousBridgeAdmin, _bridgeAdmin);
     }
 
     /// @inheritdoc IProTokenSettings
@@ -235,7 +248,7 @@ contract ProTokenSettings is
     }
 
     /// @inheritdoc IProTokenSettings
-    function removeYAsset(address _yAsset) external override onlyAdmin {
+    function removeYAsset(address _yAsset, bool _forced) external override onlyAdmin {
         // Check yAsset exists in the set
         if (!yAssets.contains(_yAsset)) revert YAssetNotFound(_yAsset);
 
@@ -247,18 +260,31 @@ contract ProTokenSettings is
 
         // Check yOperationsHandler has 0 balance
         // Use try-catch to handle misconfigured yOperationsHandler addresses
-        // If the call fails (e.g., invalid contract, EOA, or non-ERC20), assume balance is 0
+        // If the call fails (e.g., invalid contract, or non-ERC20), assume balance is 0
         address yOpsHandler = yAssetSettings[_yAsset].yOperationsHandler;
         uint256 totalAmount = 0;
-        try IYAssetOperationsHandler(yOpsHandler).getYAssetInfo() returns (
-            address,
-            uint256 amount
-        ) {
-            totalAmount = amount;
-        } catch {
-            // If call fails, totalAmount remains 0 - safe to remove misconfigured yAsset
+        bool balanceVerified;
+        if (yOpsHandler.code.length > 0) {
+            try IYAssetOperationsHandler(yOpsHandler).getYAssetInfo() returns (
+                address,
+                uint256 amount
+            ) {
+                totalAmount = amount;
+                balanceVerified = true;
+            } catch {
+                // balance unreadable → balanceVerified stays false
+            }
         }
-        if (totalAmount > 0) revert YOperationsHandlerInUseBalanceNotZero();
+
+        if (balanceVerified) {
+            // Normal path: only remove on a confirmed zero balance.
+            if (totalAmount > 0) revert YOperationsHandlerInUseBalanceNotZero();
+        } else {
+            // Unverifiable path: default fails CLOSED. Removing an asset whose backing
+            // cannot be confirmed requires an explicit admin override.
+            if (!_forced) revert BalanceUnverifiable(_yAsset, yOpsHandler);
+            emit YAssetRemovedUnverified(_yAsset, yOpsHandler);
+        }
 
         // Remove from EnumerableSet
         yAssets.remove(_yAsset);
@@ -404,6 +430,11 @@ contract ProTokenSettings is
     /// @inheritdoc IProTokenSettings
     function getStrategist() external view override returns (address) {
         return strategist;
+    }
+
+    /// @inheritdoc IProTokenSettings
+    function getBridgeAdmin() external view override returns (address) {
+        return bridgeAdmin;
     }
 
     /// @inheritdoc IProTokenSettings

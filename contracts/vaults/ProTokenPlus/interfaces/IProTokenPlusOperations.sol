@@ -27,12 +27,10 @@ interface IProTokenPlusOperations {
     /// @param caller Original msg.sender (verified against msg.sender)
     /// @param tierID The tier to deposit into
     /// @param amount Amount of proUSD to deposit
-    /// @param unlockedPositionsToMerge Array of unlocked position IDs to merge into the new position
     function executeCreateDepositRequest(
         address caller, 
         uint8 tierID, 
-        uint256 amount, 
-        uint256[] calldata unlockedPositionsToMerge
+        uint256 amount
     ) external;
 
     function executeFinalizeDepositRequest(
@@ -47,11 +45,9 @@ interface IProTokenPlusOperations {
     /// @dev Must be called via delegatecall. Reverts on direct call.
     /// @param caller Original msg.sender (verified against msg.sender)
     /// @param positionIDs Array of position IDs to withdraw from
-    /// @param unlockedPositionsToMerge Array of unlocked position IDs to merge
     function executeCreateWithdrawRequest(
         address caller,
-        uint256[] calldata positionIDs,
-        uint256[] calldata unlockedPositionsToMerge
+        uint256[] calldata positionIDs
     ) external;
 
     function executeFinalizeWithdrawRequest(
@@ -66,11 +62,9 @@ interface IProTokenPlusOperations {
     /// @dev Must be called via delegatecall. Reverts on direct call.
     /// @param caller Original msg.sender (verified against msg.sender)
     /// @param unbondingIndices Array of unbonding request indices to complete
-    /// @param unlockedPositionsToMerge Array of unlocked position IDs to merge
     function executeCompleteWithdraw(
         address caller,
-        uint256[] calldata unbondingIndices,
-        uint256[] calldata unlockedPositionsToMerge
+        uint256[] calldata unbondingIndices
     ) external;
 
     /// @notice Execute relock logic
@@ -79,14 +73,12 @@ interface IProTokenPlusOperations {
     /// @param positionIds Array of position IDs to relock
     /// @param amount Amount to relock
     /// @param toTierId The tier to relock into
-    /// @param unlockedPositionsToMerge Array of unlocked position IDs to merge
     /// @return newPositionId The ID of the newly created relocked position
     function executeRelock(
         address caller,
         uint256[] calldata positionIds,
         uint256 amount,
-        uint8 toTierId,
-        uint256[] calldata unlockedPositionsToMerge
+        uint8 toTierId
     ) external returns (uint256 newPositionId);
 
     /// @notice Execute unlockedMerge logic

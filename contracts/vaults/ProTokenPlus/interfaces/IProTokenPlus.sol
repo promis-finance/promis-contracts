@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Proprietary
 pragma solidity 0.8.29;
-pragma abicoder v2;
 
 import "../types/ProTokenPlusTypes.sol";
 
@@ -19,11 +18,9 @@ interface IProTokenPlus {
     /// @dev Creates a new lock request. Transfers ProUSD from caller to vault.
     /// @param tierID Tier to lock into (must be depositable and active)
     /// @param amount Amount of ProUSD to lock (must be >= tier's minDeposit)
-    /// @param unlockedPositionsToMerge Optional array of unlocked position IDs to merge (can be empty)
     function createDepositRequest(
         uint8 tierID,
-        uint256 amount,
-        uint256[] calldata unlockedPositionsToMerge
+        uint256 amount
     ) external;
 
     /// @notice Request unbonding process to withdraw from unlocked balances on specified positions
@@ -31,10 +28,8 @@ interface IProTokenPlus {
     ///      After unbonding period, call completeWithdraw() to claim funds.
     ///      Optionally merges unlocked positions before the main action.
     /// @param positionIDs Array of position IDs to withdraw from (must be owned by caller and unlocked)
-    /// @param unlockedPositionsToMerge Optional array of unlocked position IDs to merge (can be empty)
     function createWithdrawRequest(
-        uint256[] calldata positionIDs,
-        uint256[] calldata unlockedPositionsToMerge
+        uint256[] calldata positionIDs
     ) external;
 
     /// @notice Complete unbonding and receive ProUSD
@@ -42,10 +37,8 @@ interface IProTokenPlus {
     ///      Emits Withdrawn event for each completed unbonding request.
     ///      Optionally merges unlocked positions before the main action.
     /// @param unbondingIndices Array of unbonding request indices to complete
-    /// @param unlockedPositionsToMerge Optional array of unlocked position IDs to merge (can be empty)
     function completeWithdraw(
-        uint256[] calldata unbondingIndices,
-        uint256[] calldata unlockedPositionsToMerge
+        uint256[] calldata unbondingIndices
     ) external;
 
     /// @notice Relocate unlocked positions to a different tier with a new lock
@@ -56,13 +49,11 @@ interface IProTokenPlus {
     /// @param positionIds Array of position IDs to relocate (must be owned by caller and unlocked)
     /// @param amount Amount to relock (must be > 0 and <= total unlocked balance of provided positions)
     /// @param toTierId Tier to lock into (must be depositable and active)
-    /// @param unlockedPositionsToMerge Optional array of unlocked position IDs to merge (can be empty)
     /// @return newPositionId The ID of the newly created position
     function relock(
         uint256[] calldata positionIds,
         uint256 amount,
-        uint8 toTierId,
-        uint256[] calldata unlockedPositionsToMerge
+        uint8 toTierId
     ) external returns (uint256 newPositionId);
 
     /// @notice Consolidate multiple unlocked positions on the same tier into a single position
@@ -253,7 +244,7 @@ interface IProTokenPlus {
     /// @notice Emitted when a new position is created
     /// @param user Address of the position owner
     /// @param positionId Unique position identifier
-    /// @param amount Amount of ProUSD locked
+    /// @param amount Amount of ProUSD worth locked
     /// @param lockedTierId Tier the position was created in
     /// @param expiry Timestamp when lock expires
     event PositionCreated(
@@ -262,28 +253,6 @@ interface IProTokenPlus {
         uint256 amount,
         uint8 lockedTierId,
         uint64 expiry
-    );
-
-    /// @notice Emitted when funds are merged into an existing position (locked merge)
-    /// @param user Address of the position owner
-    /// @param newPositionId New position created with combined amount
-    /// @param oldPositionId Original position that was merged (now LOCKED_MERGED)
-    /// @param oldPositionAmount Amount that was in the old position
-    /// @param addedAmount Amount added to the position
-    /// @param totalAmount Total amount in the new position
-    /// @param lockedTierId Tier the position is locked in
-    /// @param oldPositionLockExpiry Lock expiry of the old position (for tier time calculation)
-    /// @param newExpiry New lock expiry (reset to full duration)
-    event PositionMerged(
-        address indexed user,
-        uint256 indexed newPositionId,
-        uint256 oldPositionId,
-        uint256 oldPositionAmount,
-        uint256 addedAmount,
-        uint256 totalAmount,
-        uint8 lockedTierId,
-        uint64 oldPositionLockExpiry,
-        uint64 newExpiry
     );
 
     /// @notice Emitted when unbonding is initiated
@@ -420,10 +389,10 @@ interface IProTokenPlus {
     /// @param newCap new deposit cap
     event DepositCapSet(uint256 indexed oldCap, uint256 indexed newCap);
 
-    event DepositRequestCreated(uint256 requestID, address user, uint8 tierID, uint256 amount, uint256[] unlockedPositionsToMerge);
-    event DepositRequestFinalized(uint256 requestID, address user, uint256 positionID, uint8 tierID, uint256 amount, uint256[] unlockedPositionsToMerge, uint8 proofKind);
-    event WithdrawRequestCreated(uint256 requestID, address user, uint256[] positionIDs, uint256[] unlockedPositionsToMerge);
-    event WithdrawRequestFinalized(uint256 requestID, address user, uint256[] positionIDs, uint256[] unlockedPositionsToMerge, uint8 proofKind);
+    event DepositRequestCreated(uint256 requestID, address user, uint8 tierID, uint256 amount);
+    event DepositRequestFinalized(uint256 requestID, address user, uint256 positionID, uint8 tierID, uint256 amount, uint8 proofKind);
+    event WithdrawRequestCreated(uint256 requestID, address user, uint256[] positionIDs);
+    event WithdrawRequestFinalized(uint256 requestID, address user, uint256[] positionIDs, uint8 proofKind);
     // ================================================
     // ==================== Errors ====================
     // ================================================
@@ -434,6 +403,9 @@ interface IProTokenPlus {
     /// @notice Thrown when tier ID is has a problem
     /// @param tierId The invalid tier ID
     error TierError(uint8 tierId);
+
+    /// @notice Thrown when tier name is empty
+    error EmptyTierName();
 
     /// @notice Thrown when position doesn't exist
     /// @param positionId The non-existent position ID
@@ -495,7 +467,7 @@ interface IProTokenPlus {
 
     /// @notice Thrown when tier duration is zero for non-floor tiers
     error InvalidDuration();
-    
+    error FloorTierNotDepositable();
     /// @notice Thrown when duplicate position IDs are provided in an array
     /// @param positionId The duplicate position ID
     error DuplicatePositionId(uint256 positionId);

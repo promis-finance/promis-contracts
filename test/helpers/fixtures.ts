@@ -273,7 +273,8 @@ export async function aaveV3YieldHandlerFixture(): Promise<AaveV3YieldHandlerFix
     // Configure YAssetOperationsHandler with the yield handler
     await yAssetOperationsHandler.connect(accounts.admin).setYProtocolHandlers(
         [aaveV3YieldHandlerAddress],
-        [HUNDRED_PERCENT]
+        [HUNDRED_PERCENT],
+        false
     );
 
     return {

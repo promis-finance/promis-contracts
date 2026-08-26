@@ -31,6 +31,7 @@ interface IPool {
     ) external returns (uint256);
 
     function getReserveAToken(address asset) external view returns (address);
+    function getReserveDeficit(address asset) external view returns (uint256);
 }
 
 /**
@@ -39,6 +40,7 @@ interface IPool {
  */
 interface IAToken {
     function balanceOf(address account) external view returns (uint256);
+    function totalSupply() external view returns (uint256);   // reserve-wide aToken supply
 }
 
 /**
@@ -76,6 +78,7 @@ contract AaveV3YieldHandler is
     // Additional events for reward collection
     event IncentivesControllerUpdated(address indexed incentivesController);
     event ATokenUpdated(address indexed aTokenAddress);
+    event ImpairmentToleranceUpdated(uint256 old, uint256 bps);
     event OperationsContractUpdated(address indexed operationsContract);
     /// @notice Emitted when an emergency withdrawal is performed
     event EmergencyWithdraw(
@@ -119,6 +122,9 @@ contract AaveV3YieldHandler is
         aavePool = _aavePool;
         yieldAsset = _yieldAsset;
         aToken = _aToken;
+
+        emit OperationsContractUpdated(_operationsContract);
+        emit ATokenUpdated(_aToken);
     }
 
     modifier onlyAdmin() {
@@ -289,6 +295,13 @@ contract AaveV3YieldHandler is
         incentivesController = _incentivesController;
         emit IncentivesControllerUpdated(_incentivesController);
     }
+ 
+    function setImpairmentTolerance(uint256 _bps) external onlyAdmin {
+        if (_bps > 10000) revert InvalidAmount();
+        uint256 old = impairmentToleranceBps;
+        impairmentToleranceBps = _bps;
+        emit ImpairmentToleranceUpdated(old, _bps);
+    }
 
     /**
      * @notice Emergency withdrawal of any ERC20 tokens stuck in the contract
@@ -327,10 +340,17 @@ contract AaveV3YieldHandler is
     /// @inheritdoc IYieldProtocolHandler
     function getBalance() external view returns (uint256) {
         address aTokenAddress = _getATokenAddress();
-        if (aTokenAddress == address(0)) {
-            return 0;
-        }
-        return IAToken(aTokenAddress).balanceOf(address(this));
+        if (aTokenAddress == address(0)) return 0;
+
+        uint256 nominal = IAToken(aTokenAddress).balanceOf(address(this));
+        if (nominal == 0) return 0;
+
+        (uint256 deficit, uint256 totalReserveSupply, bool readable) = _reserveImpairment();
+        if (!readable || deficit == 0 || totalReserveSupply == 0) return nominal;
+
+        uint256 impairedPortion = (nominal * deficit) / totalReserveSupply;
+
+        return nominal > impairedPortion ? nominal - impairedPortion : 0;
     }
 
     /// @inheritdoc IYieldProtocolHandler
@@ -342,9 +362,52 @@ contract AaveV3YieldHandler is
         return aavePool;
     }
 
+    /// @inheritdoc IYieldProtocolHandler
+    function acceptsAllocation() external override view returns (bool) {
+        (uint256 deficit, uint256 totalReserveSupply, bool readable) = _reserveImpairment();
+        if (!readable) return false;                   // UNREADABLE → fail closed
+        if (deficit == 0) return true;                 // healthy → accept
+        if (totalReserveSupply == 0) return false;     // degenerate: deficit but no supply → refuse
+        if (impairmentToleranceBps == 0) return false; // zero tolerance → any deficit refused
+        // impairment ratio in bps
+        uint256 ratioBps = (deficit * 10000) / totalReserveSupply;
+        return ratioBps <= impairmentToleranceBps;
+    }
+
     // ================================================
     // ============== Internal Functions ==============
     // ================================================
+
+    /// @notice Returns the reserve's impairment as (deficit, totalSupply) for the
+    ///         current yieldAsset reserve. Both zero if unreadable or healthy.
+    /// @dev Never reverts — callers depend on this for liveness (valuation and
+    ///      allocation must degrade gracefully, not fail, on an unreadable read).
+    function _reserveImpairment()
+        internal
+        view
+        returns (uint256 deficit, uint256 totalReserveSupply, bool readable)
+    {
+        address pool = aavePool;
+        address asset = yieldAsset;
+        address aTokenAddress = _getATokenAddress();
+        if (aTokenAddress == address(0)) return (0, 0, false);  // can't resolve → unreadable
+
+        try IPool(pool).getReserveDeficit(asset) returns (uint256 d) {
+            deficit = d;
+        } catch {
+            return (0, 0, false);  // deficit read failed → UNREADABLE (not healthy)
+        }
+
+        if (deficit == 0) return (0, 0, true);  // genuinely healthy, readable
+
+        try IAToken(aTokenAddress).totalSupply() returns (uint256 ts) {
+            totalReserveSupply = ts;
+        } catch {
+            return (deficit, 0, false);  // known deficit but can't size → UNREADABLE
+        }
+
+        readable = true;  // deficit > 0, supply read OK
+    }
 
     /**
      * @notice Get the aToken address for the current yield asset

@@ -22,7 +22,9 @@ contract MockAaveV3 {
     mapping(address => ReserveData) public reserves;
     mapping(address => uint256) public yieldRateBasisPoints; // 100 = 1%, 500 = 5%
     mapping(address => address) public aTokenToAsset; // Maps aToken address to underlying asset
-    
+    mapping(address => uint256) private _reserveDeficit;
+    bool public deficitReverts;
+
     address public admin;
 
     event Supply(
@@ -173,6 +175,19 @@ contract MockAaveV3 {
         // This extra balance will be used to pay yield on withdrawals
     }
 
+    function setReserveDeficit(address asset, uint256 amount) external onlyAdmin {
+        _reserveDeficit[asset] = amount;
+    }
+
+    function setDeficitReverts(bool shouldRevert) external onlyAdmin {
+        deficitReverts = shouldRevert;
+    }
+
+    function getReserveDeficit(address asset) external view returns (uint256) {
+        require(!deficitReverts, "deficit read reverts");
+        return _reserveDeficit[asset];
+    }
+
 }
 
 /**
@@ -190,6 +205,7 @@ contract MockATokenV3 {
     string public name;
     string public symbol;
     uint8 public decimals;
+    bool public totalSupplyReverts;
 
     event Transfer(address indexed from, address indexed to, uint256 value);
 
@@ -260,9 +276,7 @@ contract MockATokenV3 {
     }
 
     function totalSupply() external view returns (uint256) {
-        // In real Aave, total supply also includes accumulated yield
-        // For simplicity, we return the tracked total supply
-        // A more accurate implementation would sum all user balances with yield
+        require(!totalSupplyReverts, "totalSupply reverts");
         return _totalSupply;
     }
 
@@ -306,4 +320,7 @@ contract MockATokenV3 {
         return _balances[account];
     }
 
+    function setTotalSupplyReverts(bool shouldRevert) external {
+        totalSupplyReverts = shouldRevert;
+    }
 }

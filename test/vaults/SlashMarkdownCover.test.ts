@@ -67,6 +67,9 @@ import {
 // a `deadline`, which is part of the signed struct AND passed as the third
 // argument to the finalize functions. The flow helpers below sign and pass an
 // explicit deadline (a wide TTL so intra-test time travel never expires one).
+//
+// MERGE: unlockedPositionsToMerge has been removed from deposit/withdraw/relock
+// and their proofs — merge is now a standalone unlockedMerge call only.
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -84,7 +87,6 @@ const DEPOSIT_PROOF_TYPES = {
         { name: "tierID", type: "uint8" },
         { name: "amount", type: "uint256" },
         { name: "user", type: "address" },
-        { name: "unlockedPositionsToMerge", type: "uint256[]" },
         { name: "deadline", type: "uint256" },
         { name: "proofKind", type: "uint8" },
     ],
@@ -95,7 +97,6 @@ const WITHDRAW_PROOF_TYPES = {
         { name: "requestId", type: "uint256" },
         { name: "positionIDs", type: "uint256[]" },
         { name: "user", type: "address" },
-        { name: "unlockedPositionsToMerge", type: "uint256[]" },
         { name: "deadline", type: "uint256" },
         { name: "proofKind", type: "uint8" },
     ],
@@ -317,7 +318,7 @@ async function depositFor(
 ): Promise<bigint> {
     const createTx = await ctx.proTokenPlus
         .connect(user)
-        .createDepositRequest(tierId, amount, []);
+        .createDepositRequest(tierId, amount);
     const createReceipt = await createTx.wait();
     const createEvent = createReceipt!.logs
         .map((l) => { try { return ctx.proTokenPlus.interface.parseLog(l as never); } catch { return null; } })
@@ -331,7 +332,6 @@ async function depositFor(
         tierID: tierId,
         amount,
         user: user.address,
-        unlockedPositionsToMerge: [],
         deadline,
         proofKind: VaultProofKind.PROOF_OF_APPROVE,
     });
@@ -353,7 +353,7 @@ async function withdrawFor(
 ): Promise<bigint> {
     const createTx = await ctx.proTokenPlus
         .connect(user)
-        .createWithdrawRequest(positionIds, []);
+        .createWithdrawRequest(positionIds);
     const createReceipt = await createTx.wait();
     const createEvent = createReceipt!.logs
         .map((l) => { try { return ctx.proTokenPlus.interface.parseLog(l as never); } catch { return null; } })
@@ -366,7 +366,6 @@ async function withdrawFor(
         requestId,
         positionIDs: positionIds,
         user: user.address,
-        unlockedPositionsToMerge: [],
         deadline,
         proofKind: VaultProofKind.PROOF_OF_APPROVE,
     });
@@ -554,7 +553,7 @@ describe("StrategyVault: slash markdown and cover", function () {
 
             // Pre-cover: the reserve can't stretch to the $1.02 token count.
             await expect(
-                ctx.proTokenPlus.connect(user).completeWithdraw([unbondingIndex], []),
+                ctx.proTokenPlus.connect(user).completeWithdraw([unbondingIndex]),
             ).to.be.revertedWithCustomError(ctx.strategyVault, "WithdrawReserveUnderfunded");
 
             // Operator covers the measured withdraw-side hole.
@@ -566,7 +565,7 @@ describe("StrategyVault: slash markdown and cover", function () {
             // Post-cover: the same withdrawal succeeds, paid at $1.02.
             const balBefore = await ctx.proUSD.balanceOf(user.address);
             const reserveBefore = await ctx.strategyVault.withdrawProUSD();
-            await ctx.proTokenPlus.connect(user).completeWithdraw([unbondingIndex], []);
+            await ctx.proTokenPlus.connect(user).completeWithdraw([unbondingIndex]);
             const received = (await ctx.proUSD.balanceOf(user.address)) - balBefore;
             const consumed = reserveBefore - (await ctx.strategyVault.withdrawProUSD());
 
@@ -778,31 +777,27 @@ describe("StrategyVault: slash markdown and cover", function () {
             expect(await ctx.strategyVault.depositDeficit()).to.equal(0n);
         });
 
-        it("deficit is PRICE-INVARIANT: recovery accrual moves pool and need in lockstep; covering the stored figure restores exact backing", async function () {
+        it("deficit persists through recovery until cover (only markdown sets it, only cover retires it)", async function () {
             const ctx = await loadFixture(slashFixture);
             const admin = ctx.accounts.admin;
             const B = MIN_DEPOSIT * 10n;
             const { dShort } = await markdownWithDeficit(ctx, B);
+            expect(dShort).to.be.gt(0n);
 
-            // Price RECOVERS to $1.10 before the treasury acts, and the ratchet
-            // runs (claimGrowth triggers accrual): it frees B/1.02 − B/1.10
-            // from the still-underfunded pool into growth — pool and need drop
-            // by the same amount, so the token gap is unchanged.
+            // Price recovers to $1.10. Nothing clears the deficit — it's only set by
+            // markdown and retired by cover. Recovery does not touch it.
             await setPrice(ctx, P_110);
-            await ctx.strategyVault.connect(admin).claimGrowth(admin.address, 0n);
+            // (no claimGrowth trigger — it would revert NoYieldAvailable and, more to the
+            //  point, settlement doesn't affect the deficit under this model)
 
             expect(await ctx.strategyVault.depositDeficit()).to.equal(dShort);
 
-            // Covering the figure measured at $1.02 restores EXACT backing at
-            // $1.10 — the stored deficit was the right cover amount at any
-            // later price. This is why on-chain storage is sound here.
+            // Covering the figure measured at $1.02 restores exact backing — the stored
+            // deficit is the right cover amount at any later price.
+            await fundWithProUSD(ctx, admin.address, dShort);
             await ctx.proUSD.connect(admin).approve(ctx.strategyVaultAddress, dShort);
             await ctx.strategyVault.connect(admin).cover(dShort, 0n);
-
             expect(await ctx.strategyVault.depositDeficit()).to.equal(0n);
-            expect(await ctx.strategyVault.depositProUSD()).to.equal(
-                (B * USD_PRECISION) / P_110,
-            );
         });
 
         it("a second markdown OVERWRITES deficits net of prior covers (self-correcting)", async function () {

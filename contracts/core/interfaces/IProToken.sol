@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Proprietary
 pragma solidity 0.8.29;
-pragma abicoder v2;
 
 /// @title The interface of the IProToken
 interface IProToken {
@@ -40,7 +39,7 @@ interface IProToken {
     /// @param _stepSize The USD price step size in 18 decimal format
     function setStepSize(uint256 _stepSize) external;
 
-    /// @notice Sets the cooldown for USD price update
+    /// @notice Sets the cooldown for USD price update. Does not reset running cooldown.
     /// @dev Only callable by admin.
     /// @param _cooldown The new cooldown
     function setPriceUpdateCooldown(uint256 _cooldown) external;
@@ -53,6 +52,30 @@ interface IProToken {
     /// @dev This function can only be called by the admin
     /// @param newMinter The address of the new minter
     function setMinter(address newMinter) external;
+
+    /// @notice Sets a new bridge minter address
+    /// @dev This function can only be called by the admin. 
+    ///      Adds or removes a bridge minter (CCIP token pool). 
+    /// @param bridgeMinter The bridge contract address
+    /// @param allowed True to authorize, false to revoke
+    function setBridgeMinter(address bridgeMinter, bool allowed) external;
+
+    
+    /// @notice Pauses/unpauses BRIDGE burns (outbound). When paused, bridge minters
+    ///         cannot burn, so no new outbound bridge transfers can start. The primary
+    ///         minter is unaffected. Use alone for a planned, graceful shutdown: new
+    ///         outbound flow stops while inbound in-flight messages still complete.
+    /// @param _paused New paused state.
+    function setBridgeBurnPaused(bool _paused) external;
+
+    /// @notice Pauses/unpauses BRIDGE mints (inbound). When paused, bridge minters
+    ///         cannot mint, blocking in-flight destination messages from completing;
+    ///         those messages remain pending/retryable in CCIP and can be executed
+    ///         after unpausing (may require manual re-execution). The primary minter
+    ///         is unaffected. Combine with setBridgeBurnPaused(true) for a full
+    ///         emergency halt of all bridge activity.
+    /// @param _paused New paused state.
+    function setBridgeMintPaused(bool _paused) external;
 
     // ================================================
     // ================ View functions ================
@@ -68,6 +91,21 @@ interface IProToken {
     /// @notice Returns the address of the current proTokenSettings
     function getProTokenSettings() external view returns (address);
 
+    /// @notice CCIP admin resolution hook
+    /// @dev Chainlink's RegistryModuleOwnerCustom.registerAdminViaGetCCIPAdmin
+    ///      calls this to identify who may claim the Token Admin Registry role
+    ///      for this token.
+    function getCCIPAdmin() external view returns (address);
+    
+    /// @notice Returns true if bridge "account" is approved minter
+    function isBridgeMinter(address account) external view returns (bool);
+
+    /// @notice Returns whether bridge burns (outbound) are paused.
+    function isBridgeBurnPaused() external view returns (bool);
+
+    /// @notice Returns whether bridge mints (inbound) are paused.
+    function isBridgeMintPaused() external view returns (bool);
+
     // ================================================
     // ==================== Events ====================
     // ================================================
@@ -79,12 +117,14 @@ interface IProToken {
     /// @notice Emitted when tokens are minted
     /// @param to The address that received the minted tokens
     /// @param amount The amount of tokens that were minted
-    event Minted(address indexed to, uint256 amount);
+    /// @param minter The address which called mint
+    event Minted(address indexed to, uint256 amount, address indexed minter);
 
     /// @notice Emitted when tokens are burned
     /// @param from The address from which the tokens were burned
     /// @param amount The amount of tokens that were burned
-    event Burned(address indexed from, uint256 amount);
+    /// @param burner The address which called burn
+    event Burned(address indexed from, uint256 amount, address indexed burner);
 
     /// @notice Emitted when the USD price is set by Admin
     /// @param prevPrice The old USD price in 18 decimal format
@@ -142,4 +182,10 @@ interface IProToken {
     
     /// @dev USD price is disabled
     error USDPriceDisabled();
+
+    /// @dev Bridge burning is paused
+    error BridgeBurnPaused();
+
+    /// @dev Bridge minting is paused
+    error BridgeMintPaused();
 }

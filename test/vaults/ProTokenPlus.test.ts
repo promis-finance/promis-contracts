@@ -48,13 +48,12 @@ import {
 //
 // Domain: ("ProTokenPlus", "1") — set in ProTokenPlus.initialize via __EIP712_init
 // Types:
-//   DepositProof  (requestId, tierID, amount, user, unlockedPositionsToMerge, deadline, proofKind)
-//   WithdrawProof (requestId, positionIDs, user, unlockedPositionsToMerge, deadline, proofKind)
+//   DepositProof  (requestId, tierID, amount, user, deadline, proofKind)
+//   WithdrawProof (requestId, positionIDs, user, deadline, proofKind)
 //
-// NOTE: withdrawal has no `amount` — createWithdrawRequest(positionIDs,
-// unlockedPositionsToMerge) always withdraws the FULL listed position(s), and the
-// WithdrawProof typehash has no amount field (6 fields). Partial exits are done by
-// splitting positions beforehand, not by passing a partial amount.
+// NOTE: withdrawal has no `amount` — createWithdrawRequest(positionIDs) always
+// withdraws the FULL listed position(s). Merge is a standalone operation
+// (unlockedMerge); it is no longer bundled into deposit/withdraw/relock.
 // ---------------------------------------------------------------------------
 
 enum VaultProofKind {
@@ -67,7 +66,6 @@ interface DepositProofData {
     tierID: number;
     amount: bigint;
     user: string;
-    unlockedPositionsToMerge: bigint[];
     deadline: bigint;
     proofKind: VaultProofKind;
 }
@@ -76,7 +74,6 @@ interface WithdrawProofData {
     requestId: bigint;
     positionIDs: bigint[];
     user: string;
-    unlockedPositionsToMerge: bigint[];
     deadline: bigint;
     proofKind: VaultProofKind;
 }
@@ -87,7 +84,6 @@ const DEPOSIT_PROOF_TYPES = {
         { name: "tierID", type: "uint8" },
         { name: "amount", type: "uint256" },
         { name: "user", type: "address" },
-        { name: "unlockedPositionsToMerge", type: "uint256[]" },
         { name: "deadline", type: "uint256" },
         { name: "proofKind", type: "uint8" },
     ],
@@ -98,7 +94,6 @@ const WITHDRAW_PROOF_TYPES = {
         { name: "requestId", type: "uint256" },
         { name: "positionIDs", type: "uint256[]" },
         { name: "user", type: "address" },
-        { name: "unlockedPositionsToMerge", type: "uint256[]" },
         { name: "deadline", type: "uint256" },
         { name: "proofKind", type: "uint8" },
     ],
@@ -378,8 +373,8 @@ const POSITION_STATE_UNLOCKED = 1n;
 
 const POSITION_STATUS_ACTIVE = 0n;
 const POSITION_STATUS_WITHDRAWN = 1n;
-const POSITION_STATUS_UNLOCKED_MERGED = 3n;
-const POSITION_STATUS_RELOCATED = 4n;
+const POSITION_STATUS_UNLOCKED_MERGED = 2n;
+const POSITION_STATUS_RELOCATED = 3n;
 
 // ---------------------------------------------------------------------------
 // Flow helpers
@@ -390,11 +385,10 @@ async function depositFor(
     user: HardhatEthersSigner,
     tierId: number,
     amount: bigint,
-    unlockedPositionsToMerge: bigint[] = [],
 ): Promise<bigint> {
     const createTx = await ctx.proTokenPlus
         .connect(user)
-        .createDepositRequest(tierId, amount, unlockedPositionsToMerge);
+        .createDepositRequest(tierId, amount);
     const createReceipt = await createTx.wait();
     const createEvent = createReceipt!.logs
         .map((l) => {
@@ -409,12 +403,7 @@ async function depositFor(
 
     const deadline = await futureDeadline();
     const proof = await signDepositProof(ctx.accounts.authority, ctx.proTokenPlusAddress, {
-        requestId,
-        tierID: tierId,
-        amount,
-        user: user.address,
-        unlockedPositionsToMerge,
-        deadline,
+        requestId, tierID: tierId, amount, user: user.address, deadline,
         proofKind: VaultProofKind.PROOF_OF_APPROVE,
     });
 
@@ -488,12 +477,11 @@ async function expectDepositsBaseInvariant(
 async function withdrawFor(
     ctx: ProTokenPlusFixture,
     user: HardhatEthersSigner,
-    positionIds: bigint[],
-    unlockedPositionsToMerge: bigint[] = [],
+    positionIds: bigint[]
 ): Promise<bigint> {
     const createTx = await ctx.proTokenPlus
         .connect(user)
-        .createWithdrawRequest(positionIds, unlockedPositionsToMerge);
+        .createWithdrawRequest(positionIds);
     const createReceipt = await createTx.wait();
     const createEvent = createReceipt!.logs
         .map((l) => {
@@ -511,7 +499,6 @@ async function withdrawFor(
         requestId,
         positionIDs: positionIds,
         user: user.address,
-        unlockedPositionsToMerge,
         deadline,
         proofKind: VaultProofKind.PROOF_OF_APPROVE,
     });
@@ -537,12 +524,11 @@ async function relockFor(
     user: HardhatEthersSigner,
     positionIds: bigint[],
     amount: bigint,
-    toTierId: number,
-    unlockedPositionsToMerge: bigint[] = [],
+    toTierId: number
 ): Promise<{ newPositionId: bigint; fromTierId: bigint }> {
     const tx = await ctx.proTokenPlus
         .connect(user)
-        .relock(positionIds, amount, toTierId, unlockedPositionsToMerge);
+        .relock(positionIds, amount, toTierId);
     const receipt = await tx.wait();
     const event = receipt!.logs
         .map((l) => {
@@ -732,8 +718,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                 ctx.proTokenPlusOperations.executeCreateDepositRequest(
                     ctx.accounts.user1.address,
                     QUARTERLY_TIER_ID,
-                    HUNDRED_TOKENS,
-                    [],
+                    HUNDRED_TOKENS
                 ),
             ).to.be.revertedWithCustomError(ctx.proTokenPlusOperations, "DirectCallForbidden");
         });
@@ -751,7 +736,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             const vaultBalBefore = await ctx.proUSD.balanceOf(ctx.proTokenPlusAddress);
 
             await expect(
-                ctx.proTokenPlus.connect(user).createDepositRequest(QUARTERLY_TIER_ID, HUNDRED_TOKENS, []),
+                ctx.proTokenPlus.connect(user).createDepositRequest(QUARTERLY_TIER_ID, HUNDRED_TOKENS),
             ).to.emit(ctx.proTokenPlus, "DepositRequestCreated");
 
             // proUSD escrowed inside ProTokenPlus until finalize (not yet in the vault).
@@ -763,14 +748,14 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
         it("reverts createDepositRequest with zero amount", async function () {
             const ctx = await loadFixture(proTokenPlusFixture);
             await expect(
-                ctx.proTokenPlus.connect(ctx.accounts.user1).createDepositRequest(QUARTERLY_TIER_ID, 0n, []),
+                ctx.proTokenPlus.connect(ctx.accounts.user1).createDepositRequest(QUARTERLY_TIER_ID, 0n),
             ).to.be.revertedWithCustomError(ctx.proTokenPlus, "ZeroAmount");
         });
 
         it("reverts createDepositRequest when below tier minimum", async function () {
             const ctx = await loadFixture(proTokenPlusFixture);
             await expect(
-                ctx.proTokenPlus.connect(ctx.accounts.user1).createDepositRequest(QUARTERLY_TIER_ID, MIN_DEPOSIT - 1n, []),
+                ctx.proTokenPlus.connect(ctx.accounts.user1).createDepositRequest(QUARTERLY_TIER_ID, MIN_DEPOSIT - 1n),
             ).to.be.revertedWithCustomError(ctx.proTokenPlus, "BelowMinDeposit");
         });
 
@@ -812,7 +797,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
 
             const tx = await ctx.proTokenPlus
                 .connect(user)
-                .createDepositRequest(QUARTERLY_TIER_ID, HUNDRED_TOKENS, []);
+                .createDepositRequest(QUARTERLY_TIER_ID, HUNDRED_TOKENS);
             const receipt = await tx.wait();
             const createEvent = receipt!.logs
                 .map((l) => {
@@ -831,7 +816,6 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                 tierID: QUARTERLY_TIER_ID,
                 amount: HUNDRED_TOKENS,
                 user: user.address,
-                unlockedPositionsToMerge: [],
                 deadline,
                 proofKind: VaultProofKind.PROOF_OF_RETURN,
             });
@@ -849,7 +833,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             const ctx = await loadFixture(proTokenPlusFixture);
             const tx = await ctx.proTokenPlus
                 .connect(ctx.accounts.user1)
-                .createDepositRequest(QUARTERLY_TIER_ID, HUNDRED_TOKENS, []);
+                .createDepositRequest(QUARTERLY_TIER_ID, HUNDRED_TOKENS);
             const receipt = await tx.wait();
             const event = receipt!.logs
                 .map((l) => {
@@ -868,7 +852,6 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                 tierID: QUARTERLY_TIER_ID,
                 amount: HUNDRED_TOKENS,
                 user: ctx.accounts.user1.address,
-                unlockedPositionsToMerge: [],
                 deadline,
                 proofKind: VaultProofKind.PROOF_OF_APPROVE,
             });
@@ -881,7 +864,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
         it("reverts finalize with InvalidAuthority when signed by a non-authorized signer", async function () {
             const ctx = await loadFixture(proTokenPlusFixture);
             const user = ctx.accounts.user1;
-            const tx = await ctx.proTokenPlus.connect(user).createDepositRequest(QUARTERLY_TIER_ID, HUNDRED_TOKENS, []);
+            const tx = await ctx.proTokenPlus.connect(user).createDepositRequest(QUARTERLY_TIER_ID, HUNDRED_TOKENS);
             const receipt = await tx.wait();
             const event = receipt!.logs
                 .map((l) => {
@@ -900,7 +883,6 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                 tierID: QUARTERLY_TIER_ID,
                 amount: HUNDRED_TOKENS,
                 user: user.address,
-                unlockedPositionsToMerge: [],
                 deadline,
                 proofKind: VaultProofKind.PROOF_OF_APPROVE,
             });
@@ -921,7 +903,6 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                 tierID: QUARTERLY_TIER_ID,
                 amount: HUNDRED_TOKENS,
                 user: user.address,
-                unlockedPositionsToMerge: [],
                 deadline,
                 proofKind: VaultProofKind.PROOF_OF_APPROVE,
             });
@@ -979,7 +960,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
         ): Promise<bigint> {
             const tx = await ctx.proTokenPlus
                 .connect(user)
-                .createDepositRequest(tierId, amount, []);
+                .createDepositRequest(tierId, amount);
             const receipt = await tx.wait();
             return receipt!.logs
                 .map((l) => { try { return ctx.proTokenPlus.interface.parseLog(l as never); } catch { return null; } })
@@ -998,7 +979,6 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                 tierID: QUARTERLY_TIER_ID,
                 amount: HUNDRED_TOKENS,
                 user: user.address,
-                unlockedPositionsToMerge: [],
                 deadline,
                 proofKind: VaultProofKind.PROOF_OF_APPROVE,
             });
@@ -1022,7 +1002,6 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                 tierID: QUARTERLY_TIER_ID,
                 amount: HUNDRED_TOKENS,
                 user: user.address,
-                unlockedPositionsToMerge: [],
                 deadline: staleDeadline,
                 proofKind: VaultProofKind.PROOF_OF_APPROVE,
             });
@@ -1039,7 +1018,6 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                 tierID: QUARTERLY_TIER_ID,
                 amount: HUNDRED_TOKENS,
                 user: user.address,
-                unlockedPositionsToMerge: [],
                 deadline: freshDeadline,
                 proofKind: VaultProofKind.PROOF_OF_APPROVE,
             });
@@ -1062,7 +1040,6 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                 tierID: QUARTERLY_TIER_ID,
                 amount: HUNDRED_TOKENS,
                 user: user.address,
-                unlockedPositionsToMerge: [],
                 deadline: signedDeadline,
                 proofKind: VaultProofKind.PROOF_OF_APPROVE,
             });
@@ -1085,7 +1062,6 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                 tierID: QUARTERLY_TIER_ID,
                 amount: HUNDRED_TOKENS,
                 user: user.address,
-                unlockedPositionsToMerge: [],
                 deadline,
                 proofKind: VaultProofKind.PROOF_OF_APPROVE,
             });
@@ -1105,7 +1081,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             const positionId = await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
             await time.increase(Number(QUARTERLY_DURATION) + 1);
 
-            const createTx = await ctx.proTokenPlus.connect(user).createWithdrawRequest([positionId], []);
+            const createTx = await ctx.proTokenPlus.connect(user).createWithdrawRequest([positionId]);
             const requestId = (await createTx.wait())!.logs
                 .map((l) => { try { return ctx.proTokenPlus.interface.parseLog(l as never); } catch { return null; } })
                 .find((e) => e?.name === "WithdrawRequestCreated")!.args.requestID as bigint;
@@ -1115,7 +1091,6 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                 requestId,
                 positionIDs: [positionId],
                 user: user.address,
-                unlockedPositionsToMerge: [],
                 deadline,
                 proofKind: VaultProofKind.PROOF_OF_APPROVE,
             });
@@ -1139,7 +1114,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             const positionId = await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
             await time.increase(Number(QUARTERLY_DURATION) + 1);
 
-            const createTx = await ctx.proTokenPlus.connect(user).createWithdrawRequest([positionId], []);
+            const createTx = await ctx.proTokenPlus.connect(user).createWithdrawRequest([positionId]);
             const requestId = (await createTx.wait())!.logs
                 .map((l) => { try { return ctx.proTokenPlus.interface.parseLog(l as never); } catch { return null; } })
                 .find((e) => e?.name === "WithdrawRequestCreated")!.args.requestID as bigint;
@@ -1149,7 +1124,6 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                 requestId,
                 positionIDs: [positionId],
                 user: user.address,
-                unlockedPositionsToMerge: [],
                 deadline: staleDeadline,
                 proofKind: VaultProofKind.PROOF_OF_APPROVE,
             });
@@ -1164,7 +1138,6 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                 requestId,
                 positionIDs: [positionId],
                 user: user.address,
-                unlockedPositionsToMerge: [],
                 deadline: freshDeadline,
                 proofKind: VaultProofKind.PROOF_OF_APPROVE,
             });
@@ -1180,7 +1153,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             const positionId = await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
             await time.increase(Number(QUARTERLY_DURATION) + 1);
 
-            const createTx = await ctx.proTokenPlus.connect(user).createWithdrawRequest([positionId], []);
+            const createTx = await ctx.proTokenPlus.connect(user).createWithdrawRequest([positionId]);
             const requestId = (await createTx.wait())!.logs
                 .map((l) => { try { return ctx.proTokenPlus.interface.parseLog(l as never); } catch { return null; } })
                 .find((e) => e?.name === "WithdrawRequestCreated")!.args.requestID as bigint;
@@ -1191,7 +1164,6 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                 requestId,
                 positionIDs: [positionId],
                 user: user.address,
-                unlockedPositionsToMerge: [],
                 deadline: signedDeadline,
                 proofKind: VaultProofKind.PROOF_OF_APPROVE,
             });
@@ -1333,7 +1305,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
 
             // Before unbonding elapses, completeWithdraw reverts.
             await expect(
-                ctx.proTokenPlus.connect(user).completeWithdraw([unbondingIndex], []),
+                ctx.proTokenPlus.connect(user).completeWithdraw([unbondingIndex]),
             ).to.be.revertedWithCustomError(ctx.proTokenPlus, "UnbondingNotComplete");
 
             await time.increase(Number(DEFAULT_UNBONDING_PERIOD) + 1);
@@ -1342,7 +1314,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             const balBefore = await ctx.proUSD.balanceOf(user.address);
 
             await expect(
-                ctx.proTokenPlus.connect(user).completeWithdraw([unbondingIndex], []),
+                ctx.proTokenPlus.connect(user).completeWithdraw([unbondingIndex]),
             ).to.emit(ctx.proTokenPlus, "Withdrawn");
 
             // User paid out in proUSD; the reserve was consumed by exactly the payout.
@@ -1371,7 +1343,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
 
             // take() reverts because withdrawProUSD is underfunded (by design).
             await expect(
-                ctx.proTokenPlus.connect(user).completeWithdraw([unbondingIndex], []),
+                ctx.proTokenPlus.connect(user).completeWithdraw([unbondingIndex]),
             ).to.be.revertedWithCustomError(ctx.strategyVault, "WithdrawReserveUnderfunded");
         });
 
@@ -1628,12 +1600,12 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             const positionId = await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
 
             await expect(
-                ctx.proTokenPlus.connect(user).createWithdrawRequest([positionId], []),
+                ctx.proTokenPlus.connect(user).createWithdrawRequest([positionId]),
             ).to.be.revertedWithCustomError(ctx.proTokenPlus, "PositionNotUnlocked");
 
             await time.increase(Number(QUARTERLY_DURATION) + 1);
             await expect(
-                ctx.proTokenPlus.connect(user).createWithdrawRequest([positionId], []),
+                ctx.proTokenPlus.connect(user).createWithdrawRequest([positionId]),
             ).to.emit(ctx.proTokenPlus, "WithdrawRequestCreated");
         });
 
@@ -1643,7 +1615,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             const positionId = await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
             await time.increase(Number(QUARTERLY_DURATION) + 1);
 
-            const tx = await ctx.proTokenPlus.connect(user).createWithdrawRequest([positionId], []);
+            const tx = await ctx.proTokenPlus.connect(user).createWithdrawRequest([positionId]);
             const receipt = await tx.wait();
             const event = receipt!.logs
                 .map((l) => {
@@ -1661,7 +1633,6 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                 requestId,
                 positionIDs: [positionId],
                 user: user.address,
-                unlockedPositionsToMerge: [],
                 deadline,
                 proofKind: VaultProofKind.PROOF_OF_RETURN,
             });
@@ -1694,7 +1665,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
         it("reverts createWithdrawRequest with empty positions array", async function () {
             const ctx = await loadFixture(proTokenPlusFixture);
             await expect(
-                ctx.proTokenPlus.connect(ctx.accounts.user1).createWithdrawRequest([], []),
+                ctx.proTokenPlus.connect(ctx.accounts.user1).createWithdrawRequest([]),
             ).to.be.revertedWithCustomError(ctx.proTokenPlus, "EmptyPositionArray");
         });
 
@@ -1705,7 +1676,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             await time.increase(Number(QUARTERLY_DURATION) + 1);
 
             await expect(
-                ctx.proTokenPlus.connect(user).createWithdrawRequest([positionId, positionId], []),
+                ctx.proTokenPlus.connect(user).createWithdrawRequest([positionId, positionId]),
             ).to.be.revertedWithCustomError(ctx.proTokenPlus, "DuplicatePositionId");
         });
 
@@ -1715,7 +1686,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             await time.increase(Number(QUARTERLY_DURATION) + 1);
 
             await expect(
-                ctx.proTokenPlus.connect(ctx.accounts.user2).createWithdrawRequest([positionId], []),
+                ctx.proTokenPlus.connect(ctx.accounts.user2).createWithdrawRequest([positionId]),
             ).to.be.revertedWithCustomError(ctx.proTokenPlus, "PositionNotOwned");
         });
 
@@ -1737,7 +1708,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
 
             const expectedPayout = (await convertFromBase(ctx, base1)) + (await convertFromBase(ctx, base2));
             const balBefore = await ctx.proUSD.balanceOf(user.address);
-            await ctx.proTokenPlus.connect(user).completeWithdraw([u1, u2], []);
+            await ctx.proTokenPlus.connect(user).completeWithdraw([u1, u2]);
             const balAfter = await ctx.proUSD.balanceOf(user.address);
             expect(balAfter - balBefore).to.equal(expectedPayout);
         });
@@ -1816,7 +1787,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
 
             // At NAV $1, proUSDAmount == worthBase == HUNDRED_TOKENS.
             await expect(
-                ctx.proTokenPlus.connect(user).relock([positionId], HUNDRED_TOKENS, ANNUAL_TIER_ID, []),
+                ctx.proTokenPlus.connect(user).relock([positionId], HUNDRED_TOKENS, ANNUAL_TIER_ID),
             )
                 .to.emit(ctx.strategyVault, "RegivenAsync")
                 .withArgs(ctx.proTokenPlusAddress, HUNDRED_TOKENS, HUNDRED_TOKENS);
@@ -1833,7 +1804,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             const user = ctx.accounts.user1;
             const positionId = await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
             await expect(
-                ctx.proTokenPlus.connect(user).relock([positionId], HUNDRED_TOKENS, ANNUAL_TIER_ID, []),
+                ctx.proTokenPlus.connect(user).relock([positionId], HUNDRED_TOKENS, ANNUAL_TIER_ID),
             ).to.be.revertedWithCustomError(ctx.proTokenPlus, "PositionNotUnlocked");
         });
 
@@ -1843,7 +1814,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             const positionId = await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
             await time.increase(Number(QUARTERLY_DURATION) + 1);
             await expect(
-                ctx.proTokenPlus.connect(user).relock([positionId], HUNDRED_TOKENS, FLOOR_TIER_ID, []),
+                ctx.proTokenPlus.connect(user).relock([positionId], HUNDRED_TOKENS, FLOOR_TIER_ID),
             ).to.be.revertedWithCustomError(ctx.proTokenPlus, "TierError");
         });
 
@@ -1854,7 +1825,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             await prefundReserve(ctx, await ctx.strategyVault.depositBase());
             await time.increase(Number(QUARTERLY_DURATION) + 1);
 
-            await ctx.proTokenPlus.connect(user).relock([positionId], HUNDRED_TOKENS, ANNUAL_TIER_ID, []);
+            await ctx.proTokenPlus.connect(user).relock([positionId], HUNDRED_TOKENS, ANNUAL_TIER_ID);
 
             const ids = await ctx.proTokenPlus.getUserPositionIds(user.address, 0, 10, true);
             expect(ids.totalCount).to.equal(2n);
@@ -1874,7 +1845,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             const positionId = await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
             await time.increase(Number(QUARTERLY_DURATION) + 1);
             await expect(
-                ctx.proTokenPlus.connect(user).relock([positionId, positionId], HUNDRED_TOKENS, ANNUAL_TIER_ID, []),
+                ctx.proTokenPlus.connect(user).relock([positionId, positionId], HUNDRED_TOKENS, ANNUAL_TIER_ID),
             ).to.be.revertedWithCustomError(ctx.proTokenPlus, "DuplicatePositionId");
         });
     });
@@ -1921,7 +1892,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             // caller in the event is the ProTokenPlus proxy (regive runs from the
             // Operations delegatecall inside ProTokenPlus's context).
             await expect(
-                ctx.proTokenPlus.connect(user).relock([positionId], HUNDRED_TOKENS, ANNUAL_TIER_ID, []),
+                ctx.proTokenPlus.connect(user).relock([positionId], HUNDRED_TOKENS, ANNUAL_TIER_ID),
             )
                 .to.emit(ctx.strategyVault, "RegivenAsync")
                 .withArgs(ctx.proTokenPlusAddress, HUNDRED_TOKENS, HUNDRED_TOKENS);
@@ -1962,7 +1933,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             const positionId = await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
             await strategistBorrow(ctx, HUNDRED_TOKENS);
             await time.increase(Number(QUARTERLY_DURATION) + 1);
-            await ctx.proTokenPlus.connect(user).relock([positionId], HUNDRED_TOKENS, ANNUAL_TIER_ID, []);
+            await ctx.proTokenPlus.connect(user).relock([positionId], HUNDRED_TOKENS, ANNUAL_TIER_ID);
 
             // Strategist repays enough to cover the deferred worthBase.
             // yAsset is 6-dec USDC; strategicMint converts 1:1 to proUSD at NAV $1.
@@ -2007,7 +1978,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             const positionId = await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS * 3n);
             await strategistBorrow(ctx, HUNDRED_TOKENS * 3n);
             await time.increase(Number(QUARTERLY_DURATION) + 1);
-            await ctx.proTokenPlus.connect(user).relock([positionId], HUNDRED_TOKENS * 3n, ANNUAL_TIER_ID, []);
+            await ctx.proTokenPlus.connect(user).relock([positionId], HUNDRED_TOKENS * 3n, ANNUAL_TIER_ID);
 
             // Repay enough to cover all 300.
             const repayUSDC = 400n * 10n ** 6n;
@@ -2032,7 +2003,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             const positionId = await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
             await strategistBorrow(ctx, HUNDRED_TOKENS);
             await time.increase(Number(QUARTERLY_DURATION) + 1);
-            await ctx.proTokenPlus.connect(user).relock([positionId], HUNDRED_TOKENS, ANNUAL_TIER_ID, []);
+            await ctx.proTokenPlus.connect(user).relock([positionId], HUNDRED_TOKENS, ANNUAL_TIER_ID);
 
             const repayUSDC = 200n * 10n ** 6n;
             await ctx.yAsset.mint(ctx.accounts.strategist.address, repayUSDC);
@@ -2080,7 +2051,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             // Async relock: totalDepositsBase stays at HUNDRED_TOKENS (source burned +
             // new position credited), depositBase stays at 0.
             await time.increase(Number(QUARTERLY_DURATION) + 1);
-            await ctx.proTokenPlus.connect(user).relock([positionId], HUNDRED_TOKENS, ANNUAL_TIER_ID, []);
+            await ctx.proTokenPlus.connect(user).relock([positionId], HUNDRED_TOKENS, ANNUAL_TIER_ID);
             expect(await ctx.proTokenPlus.totalDepositsBase()).to.equal(HUNDRED_TOKENS);
             expect(await ctx.strategyVault.depositBase()).to.equal(0n);
 
@@ -2164,7 +2135,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             // withdrawFor finalizes the request → _executeInitiateWithdraw →
             // vault.earmark(request.amount). Caller seen by the vault is the
             // ProTokenPlus proxy (delegatecall context).
-            const createTx = await ctx.proTokenPlus.connect(user).createWithdrawRequest([positionId], []);
+            const createTx = await ctx.proTokenPlus.connect(user).createWithdrawRequest([positionId]);
             const requestId = (await createTx.wait())!.logs
                 .map((l) => { try { return ctx.proTokenPlus.interface.parseLog(l as never); } catch { return null; } })
                 .find((e) => e?.name === "WithdrawRequestCreated")!.args.requestID as bigint;
@@ -2173,7 +2144,6 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                 requestId,
                 positionIDs: [positionId],
                 user: user.address,
-                unlockedPositionsToMerge: [],
                 deadline,
                 proofKind: VaultProofKind.PROOF_OF_APPROVE,
             });
@@ -2206,7 +2176,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             expect(await ctx.strategyVault.earmarkedWithdrawBase()).to.equal(totalBase);
 
             await time.increase(Number(DEFAULT_UNBONDING_PERIOD) + 1);
-            await ctx.proTokenPlus.connect(user).completeWithdraw([unbondingIndex], []);
+            await ctx.proTokenPlus.connect(user).completeWithdraw([unbondingIndex]);
 
             // Obligation settled → earmark fully released.
             expect(await ctx.strategyVault.earmarkedWithdrawBase()).to.equal(0n);
@@ -2244,7 +2214,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             // GREEN: the surplus gate (110 − 101.5 ≈ 8.5 < 100) defers instead.
             const reserveBefore = await ctx.strategyVault.withdrawProUSD();
             await expect(
-                ctx.proTokenPlus.connect(bob).relock([bobPos], HUNDRED_TOKENS, ANNUAL_TIER_ID, []),
+                ctx.proTokenPlus.connect(bob).relock([bobPos], HUNDRED_TOKENS, ANNUAL_TIER_ID),
             )
                 .to.emit(ctx.strategyVault, "RegivenAsync")
                 .withArgs(ctx.proTokenPlusAddress, HUNDRED_TOKENS, HUNDRED_TOKENS);
@@ -2259,7 +2229,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             // Alice's matured exit is paid in full — the race is gone.
             await time.increase(Number(DEFAULT_UNBONDING_PERIOD) + 1);
             const balBefore = await ctx.proUSD.balanceOf(alice.address);
-            await ctx.proTokenPlus.connect(alice).completeWithdraw([unbondingIndex], []);
+            await ctx.proTokenPlus.connect(alice).completeWithdraw([unbondingIndex]);
             expect((await ctx.proUSD.balanceOf(alice.address)) - balBefore).to.equal(
                 await convertFromBase(ctx, aliceTotal),
             );
@@ -2299,7 +2269,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             expect(await ctx.strategyVault.withdrawBase()).to.equal(aliceTotal);
             await time.increase(Number(DEFAULT_UNBONDING_PERIOD) + 1);
             await expect(
-                ctx.proTokenPlus.connect(alice).completeWithdraw([unbondingIndex], []),
+                ctx.proTokenPlus.connect(alice).completeWithdraw([unbondingIndex]),
             ).to.emit(ctx.proTokenPlus, "Withdrawn");
             expect(await ctx.strategyVault.earmarkedWithdrawBase()).to.equal(0n);
         });
@@ -2331,7 +2301,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
 
             // Every regive defers…
             await expect(
-                ctx.proTokenPlus.connect(bob).relock([bobPos], HUNDRED_TOKENS, ANNUAL_TIER_ID, []),
+                ctx.proTokenPlus.connect(bob).relock([bobPos], HUNDRED_TOKENS, ANNUAL_TIER_ID),
             ).to.emit(ctx.strategyVault, "RegivenAsync");
 
             // …and every rotate reverts with surplus 0.
@@ -2379,7 +2349,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             await time.increase(Number(DEFAULT_UNBONDING_PERIOD) + 1);
             const balBefore = await ctx.proUSD.balanceOf(alice.address);
             const unbondings = await ctx.proTokenPlus.getActiveUnbondingIndices(alice.address);
-            await ctx.proTokenPlus.connect(alice).completeWithdraw([unbondings[0]], []);
+            await ctx.proTokenPlus.connect(alice).completeWithdraw([unbondings[0]]);
 
             expect((await ctx.proUSD.balanceOf(alice.address)) - balBefore).to.equal(
                 (aliceTotal * USD_PRECISION) / P_110,
@@ -2411,7 +2381,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             await expectEarmarkInvariant(ctx, [alice, bob]);
 
             await time.increase(Number(DEFAULT_UNBONDING_PERIOD) + 1);
-            await ctx.proTokenPlus.connect(alice).completeWithdraw([uA1], []);
+            await ctx.proTokenPlus.connect(alice).completeWithdraw([uA1]);
             await expectEarmarkInvariant(ctx, [alice, bob]);
 
             // A late initiate after completions still tracks.
@@ -2420,7 +2390,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
 
             // Bob completes last; only alice's a2 unbonding remains earmarked.
             const bobUnbondings = await ctx.proTokenPlus.getActiveUnbondingIndices(bob.address);
-            await ctx.proTokenPlus.connect(bob).completeWithdraw([bobUnbondings[0]], []);
+            await ctx.proTokenPlus.connect(bob).completeWithdraw([bobUnbondings[0]]);
             await expectEarmarkInvariant(ctx, [alice, bob]);
             expect(await ctx.strategyVault.earmarkedWithdrawBase()).to.equal(
                 await positionTotalBase(ctx, a2),
@@ -2448,8 +2418,8 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
 
             const SECONDS_PER_YEAR_BN = 365n * ONE_DAY_BN;
             const rewardsPerPosition = (HUNDRED_TOKENS * QUARTERLY_APR * QUARTERLY_DURATION) / (SECONDS_PER_YEAR_BN * USD_PRECISION);
-            const expectedMergedAmount = 2n * (HUNDRED_TOKENS + rewardsPerPosition);
-            expect(merged[0].amount).to.equal(expectedMergedAmount);
+            expect(merged[0].amount).to.equal(2n * HUNDRED_TOKENS);
+            expect(merged[0].lockedRewards).to.equal(2n * rewardsPerPosition);
             expect(merged[0].lockedTierId).to.equal(QUARTERLY_TIER_ID);
             expect(merged[0].state).to.equal(POSITION_STATE_UNLOCKED);
 
@@ -2487,20 +2457,6 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             await expect(
                 ctx.proTokenPlus.connect(user).unlockedMerge([id, id]),
             ).to.be.revertedWithCustomError(ctx.proTokenPlus, "DuplicatePositionId");
-        });
-
-        it("pre-merge via unlockedPositionsToMerge consolidates before the main action", async function () {
-            const ctx = await loadFixture(proTokenPlusFixture);
-            const user = ctx.accounts.user1;
-
-            const id1 = await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
-            const id2 = await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
-            await time.increase(Number(QUARTERLY_DURATION) + 1);
-
-            await depositFor(ctx, user, ANNUAL_TIER_ID, HUNDRED_TOKENS, [id1, id2]);
-
-            const ids = await ctx.proTokenPlus.getUserPositionIds(user.address, 0, 10, true);
-            expect(ids.totalCount).to.equal(2n);
         });
     });
 
@@ -2619,7 +2575,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             expect(await ctx.proTokenPlus.isPaused()).to.equal(true);
 
             await expect(
-                ctx.proTokenPlus.connect(user).createDepositRequest(QUARTERLY_TIER_ID, HUNDRED_TOKENS, []),
+                ctx.proTokenPlus.connect(user).createDepositRequest(QUARTERLY_TIER_ID, HUNDRED_TOKENS),
             ).to.be.revertedWithCustomError(ctx.proTokenPlus, "EnforcedPause");
 
             await expect(ctx.proTokenPlus.connect(user).unpause()).to.be.revertedWithCustomError(ctx.proTokenPlus, "NotAdmin");
@@ -2637,7 +2593,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             const ctx = await loadFixture(proTokenPlusFixture);
 
             await expect(
-                ctx.proTokenPlusOperations.executeCreateDepositRequest(ctx.accounts.user1.address, QUARTERLY_TIER_ID, HUNDRED_TOKENS, []),
+                ctx.proTokenPlusOperations.executeCreateDepositRequest(ctx.accounts.user1.address, QUARTERLY_TIER_ID, HUNDRED_TOKENS),
             ).to.be.revertedWithCustomError(ctx.proTokenPlusOperations, "DirectCallForbidden");
 
             await expect(
@@ -2645,7 +2601,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             ).to.be.revertedWithCustomError(ctx.proTokenPlusOperations, "DirectCallForbidden");
 
             await expect(
-                ctx.proTokenPlusOperations.executeCreateWithdrawRequest(ctx.accounts.user1.address, [1n], []),
+                ctx.proTokenPlusOperations.executeCreateWithdrawRequest(ctx.accounts.user1.address, [1n]),
             ).to.be.revertedWithCustomError(ctx.proTokenPlusOperations, "DirectCallForbidden");
 
             await expect(
@@ -2653,11 +2609,11 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             ).to.be.revertedWithCustomError(ctx.proTokenPlusOperations, "DirectCallForbidden");
 
             await expect(
-                ctx.proTokenPlusOperations.executeCompleteWithdraw(ctx.accounts.user1.address, [0n], []),
+                ctx.proTokenPlusOperations.executeCompleteWithdraw(ctx.accounts.user1.address, [0n]),
             ).to.be.revertedWithCustomError(ctx.proTokenPlusOperations, "DirectCallForbidden");
 
             await expect(
-                ctx.proTokenPlusOperations.executeRelock(ctx.accounts.user1.address, [1n], HUNDRED_TOKENS, ANNUAL_TIER_ID, []),
+                ctx.proTokenPlusOperations.executeRelock(ctx.accounts.user1.address, [1n], HUNDRED_TOKENS, ANNUAL_TIER_ID),
             ).to.be.revertedWithCustomError(ctx.proTokenPlusOperations, "DirectCallForbidden");
 
             await expect(
@@ -2767,7 +2723,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
     //
     // Invariant: totalDepositsBase == Σ active position.amount (principal-base),
     // across every mutating path. Rewards are promoted into principal on relock
-    // and merge, and must be reflected; withdrawal removes principal at INITIATE
+    // and not merge, and must be reflected; withdrawal removes principal at INITIATE
     // (not at completeWithdraw). Each test asserts the invariant after the op.
     // =======================================================================
     describe("totalDepositsBase invariant", function () {
@@ -2806,7 +2762,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
 
             const tx = await ctx.proTokenPlus
                 .connect(user)
-                .createDepositRequest(QUARTERLY_TIER_ID, HUNDRED_TOKENS, []);
+                .createDepositRequest(QUARTERLY_TIER_ID, HUNDRED_TOKENS);
             const receipt = await tx.wait();
             const requestId = receipt!.logs
                 .map((l) => {
@@ -2820,7 +2776,6 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                 tierID: QUARTERLY_TIER_ID,
                 amount: HUNDRED_TOKENS,
                 user: user.address,
-                unlockedPositionsToMerge: [],
                 deadline,
                 proofKind: VaultProofKind.PROOF_OF_RETURN,
             });
@@ -2849,7 +2804,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
 
             // completeWithdraw pays out but doesn't touch totalDepositsBase.
             await time.increase(Number(DEFAULT_UNBONDING_PERIOD) + 1);
-            await ctx.proTokenPlus.connect(user).completeWithdraw([unbondingIndex], []);
+            await ctx.proTokenPlus.connect(user).completeWithdraw([unbondingIndex]);
 
             expect(await ctx.proTokenPlus.totalDepositsBase()).to.equal(0n);
             await expectDepositsBaseInvariant(ctx, [user]);
@@ -2891,7 +2846,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
 
             // Relock half the total value; the rest stays as a remainder.
             const sliceAmount = total / 2n;
-            await ctx.proTokenPlus.connect(user).relock([positionId], sliceAmount, QUARTERLY_TIER_ID, []);
+            await ctx.proTokenPlus.connect(user).relock([positionId], sliceAmount, QUARTERLY_TIER_ID);
 
             // Invariant must hold regardless of how the slice split principal vs rewards.
             await expectDepositsBaseInvariant(ctx, [user]);
@@ -2914,21 +2869,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             await ctx.proTokenPlus.connect(user).unlockedMerge([id1, id2]);
 
             // Merged position's principal = sum of both totals (rewards promoted).
-            expect(await ctx.proTokenPlus.totalDepositsBase()).to.equal(base1 + base2);
-            await expectDepositsBaseInvariant(ctx, [user]);
-        });
-
-        it("merge via unlockedPositionsToMerge (during a deposit) keeps the invariant", async function () {
-            const ctx = await loadFixture(proTokenPlusFixture);
-            const user = ctx.accounts.user1;
-
-            const id1 = await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
-            const id2 = await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
-            await time.increase(Number(QUARTERLY_DURATION) + 1);
-
-            // This deposit pre-merges id1+id2, then books the new deposit.
-            await depositFor(ctx, user, ANNUAL_TIER_ID, HUNDRED_TOKENS, [id1, id2]);
-
+            expect(await ctx.proTokenPlus.totalDepositsBase()).to.equal(HUNDRED_TOKENS * 2n);
             await expectDepositsBaseInvariant(ctx, [user]);
         });
 
@@ -2946,7 +2887,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
 
             // Partial relock of idA into ANNUAL.
             const totalA = await positionTotalBase(ctx, idA);
-            await ctx.proTokenPlus.connect(user).relock([idA], totalA / 2n, ANNUAL_TIER_ID, []);
+            await ctx.proTokenPlus.connect(user).relock([idA], totalA / 2n, ANNUAL_TIER_ID);
             await expectDepositsBaseInvariant(ctx, [user]);
 
             // Merge the remaining unlocked QUARTERLY positions.
@@ -3044,7 +2985,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             const user = ctx.accounts.user2;
             const tx = await ctx.proTokenPlus
                 .connect(user)
-                .createDepositRequest(ANNUAL_TIER_ID, MIN_DEPOSIT, []);
+                .createDepositRequest(ANNUAL_TIER_ID, MIN_DEPOSIT);
             const requestId = (await tx.wait())!.logs
                 .map((l) => {
                     try { return ctx.proTokenPlus.interface.parseLog(l as never); } catch { return null; }
@@ -3057,7 +2998,6 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                 tierID: ANNUAL_TIER_ID,
                 amount: MIN_DEPOSIT,
                 user: user.address,
-                unlockedPositionsToMerge: [],
                 deadline,
                 proofKind: VaultProofKind.PROOF_OF_APPROVE,
             });
@@ -3079,7 +3019,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             const user = ctx.accounts.user1;
             const tx = await ctx.proTokenPlus
                 .connect(user)
-                .createDepositRequest(ANNUAL_TIER_ID, MIN_DEPOSIT * 6n, []);
+                .createDepositRequest(ANNUAL_TIER_ID, MIN_DEPOSIT * 6n);
             const requestId = (await tx.wait())!.logs
                 .map((l) => {
                     try { return ctx.proTokenPlus.interface.parseLog(l as never); } catch { return null; }
@@ -3092,7 +3032,6 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                 tierID: ANNUAL_TIER_ID,
                 amount: MIN_DEPOSIT * 6n,
                 user: user.address,
-                unlockedPositionsToMerge: [],
                 deadline,
                 proofKind: VaultProofKind.PROOF_OF_APPROVE,
             });
@@ -3127,14 +3066,12 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             expect(await ctx.proTokenPlus.totalDepositsBase()).to.be.gt(await ctx.proTokenPlus.depositCap());
         });
 
-        it("merge can push totalDepositsBase above the cap (promoted rewards bypass the cap by design)", async function () {
+        it("merge does not inflate the ledger", async function () {
             const ctx = await loadFixture(proTokenPlusFixture);
             const user = ctx.accounts.user1;
 
             const id1 = await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
             const id2 = await depositFor(ctx, user, QUARTERLY_TIER_ID, HUNDRED_TOKENS);
-            const base1 = await positionTotalBase(ctx, id1);
-            const base2 = await positionTotalBase(ctx, id2);
 
             // Cap set to the deposited principal (excludes rewards).
             const cap = HUNDRED_TOKENS * 2n;
@@ -3144,8 +3081,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             await ctx.proTokenPlus.connect(user).unlockedMerge([id1, id2]);
 
             // Merged principal includes promoted rewards → above the cap, by design.
-            expect(await ctx.proTokenPlus.totalDepositsBase()).to.equal(base1 + base2);
-            expect(await ctx.proTokenPlus.totalDepositsBase()).to.be.gt(cap);
+            expect(await ctx.proTokenPlus.totalDepositsBase()).to.equal(HUNDRED_TOKENS * 2n);
         });
 
         it("lowering the cap below current deposits blocks new deposits but does not claw back", async function () {
@@ -3164,7 +3100,7 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
             const user = ctx.accounts.user2;
             const tx = await ctx.proTokenPlus
                 .connect(user)
-                .createDepositRequest(ANNUAL_TIER_ID, MIN_DEPOSIT, []);
+                .createDepositRequest(ANNUAL_TIER_ID, MIN_DEPOSIT);
             const requestId = (await tx.wait())!.logs
                 .map((l) => {
                     try { return ctx.proTokenPlus.interface.parseLog(l as never); } catch { return null; }
@@ -3176,7 +3112,6 @@ describe("ProTokenPlus + ProTokenPlusOperations", function () {
                 tierID: ANNUAL_TIER_ID,
                 amount: MIN_DEPOSIT,
                 user: user.address,
-                unlockedPositionsToMerge: [],
                 deadline,
                 proofKind: VaultProofKind.PROOF_OF_APPROVE,
             });

@@ -139,7 +139,7 @@ describe("YAssetOperationsHandler", function () {
 
             await ctx.yAssetOperationsHandler
                 .connect(ctx.accounts.admin)
-                .setYProtocolHandlers([ctx.h1Addr], [ALLOCATION_PRECISION_BPS]);
+                .setYProtocolHandlers([ctx.h1Addr], [ALLOCATION_PRECISION_BPS], false);
 
             const handlers = await ctx.yAssetOperationsHandler.getYProtocolHandlers();
             expect(handlers.length).to.equal(1);
@@ -155,6 +155,7 @@ describe("YAssetOperationsHandler", function () {
                 .setYProtocolHandlers(
                     [ctx.h1Addr, ctx.h2Addr],
                     [FIFTY_PERCENT_BPS, FIFTY_PERCENT_BPS],
+                    false
                 );
 
             const handlers = await ctx.yAssetOperationsHandler.getYProtocolHandlers();
@@ -169,6 +170,7 @@ describe("YAssetOperationsHandler", function () {
                     .setYProtocolHandlers(
                         [ctx.h1Addr, ctx.h2Addr],
                         [FIFTY_PERCENT_BPS, FIFTY_PERCENT_BPS],
+                        false
                     ),
             ).to.emit(ctx.yAssetOperationsHandler, EVENTS.YProtocolHandlersSet);
         });
@@ -178,11 +180,11 @@ describe("YAssetOperationsHandler", function () {
 
             await ctx.yAssetOperationsHandler
                 .connect(ctx.accounts.admin)
-                .setYProtocolHandlers([ctx.h1Addr], [ALLOCATION_PRECISION_BPS]);
+                .setYProtocolHandlers([ctx.h1Addr], [ALLOCATION_PRECISION_BPS], false);
 
             await ctx.yAssetOperationsHandler
                 .connect(ctx.accounts.admin)
-                .setYProtocolHandlers([ctx.h2Addr], [ALLOCATION_PRECISION_BPS]);
+                .setYProtocolHandlers([ctx.h2Addr], [ALLOCATION_PRECISION_BPS], false);
 
             const handlers = await ctx.yAssetOperationsHandler.getYProtocolHandlers();
             expect(handlers.length).to.equal(1);
@@ -194,7 +196,7 @@ describe("YAssetOperationsHandler", function () {
             await expect(
                 ctx.yAssetOperationsHandler
                     .connect(ctx.accounts.admin)
-                    .setYProtocolHandlers([ctx.h1Addr], [FIFTY_PERCENT_BPS, FIFTY_PERCENT_BPS]),
+                    .setYProtocolHandlers([ctx.h1Addr], [FIFTY_PERCENT_BPS, FIFTY_PERCENT_BPS], false),
             ).to.be.revertedWithCustomError(
                 ctx.yAssetOperationsHandler,
                 ERRORS.ArrayLengthMismatch,
@@ -206,7 +208,7 @@ describe("YAssetOperationsHandler", function () {
             await expect(
                 ctx.yAssetOperationsHandler
                     .connect(ctx.accounts.admin)
-                    .setYProtocolHandlers([], []),
+                    .setYProtocolHandlers([], [], false),
             ).to.be.revertedWithCustomError(
                 ctx.yAssetOperationsHandler,
                 ERRORS.NoHandlers,
@@ -221,6 +223,7 @@ describe("YAssetOperationsHandler", function () {
                     .setYProtocolHandlers(
                         [ZERO_ADDRESS, ctx.h2Addr],
                         [FIFTY_PERCENT_BPS, FIFTY_PERCENT_BPS],
+                        false
                     ),
             ).to.be.revertedWithCustomError(
                 ctx.yAssetOperationsHandler,
@@ -236,6 +239,7 @@ describe("YAssetOperationsHandler", function () {
                     .setYProtocolHandlers(
                         [ctx.h1Addr, ctx.h2Addr],
                         [FIFTY_PERCENT_BPS, TEN_PERCENT_BPS], // 60%
+                        false
                     ),
             ).to.be.revertedWithCustomError(
                 ctx.yAssetOperationsHandler,
@@ -251,6 +255,7 @@ describe("YAssetOperationsHandler", function () {
                     .setYProtocolHandlers(
                         [ctx.h1Addr, ctx.h2Addr],
                         [ALLOCATION_PRECISION_BPS, FIFTY_PERCENT_BPS], // 150%
+                        false
                     ),
             ).to.be.revertedWithCustomError(
                 ctx.yAssetOperationsHandler,
@@ -263,7 +268,7 @@ describe("YAssetOperationsHandler", function () {
             await expect(
                 ctx.yAssetOperationsHandler
                     .connect(ctx.accounts.operator)
-                    .setYProtocolHandlers([ctx.h1Addr], [ALLOCATION_PRECISION_BPS]),
+                    .setYProtocolHandlers([ctx.h1Addr], [ALLOCATION_PRECISION_BPS], false),
             ).to.be.revertedWithCustomError(
                 ctx.yAssetOperationsHandler,
                 ERRORS.NotAdmin,
@@ -275,7 +280,7 @@ describe("YAssetOperationsHandler", function () {
             await expect(
                 ctx.yAssetOperationsHandler
                     .connect(ctx.accounts.attacker)
-                    .setYProtocolHandlers([ctx.h1Addr], [ALLOCATION_PRECISION_BPS]),
+                    .setYProtocolHandlers([ctx.h1Addr], [ALLOCATION_PRECISION_BPS], false),
             ).to.be.revertedWithCustomError(
                 ctx.yAssetOperationsHandler,
                 ERRORS.NotAdmin,
@@ -295,7 +300,7 @@ describe("YAssetOperationsHandler", function () {
 
             await ctx.yAssetOperationsHandler
                 .connect(ctx.accounts.admin)
-                .setYProtocolHandlers([handlerAddr], [ALLOCATION_PRECISION_BPS]);
+                .setYProtocolHandlers([handlerAddr], [ALLOCATION_PRECISION_BPS], false);
 
             return { ...ctx, handler, handlerAddr };
         }
@@ -434,7 +439,7 @@ describe("YAssetOperationsHandler", function () {
             const handlerAddr = await handler.getAddress();
             await ctx.yAssetOperationsHandler
                 .connect(ctx.accounts.admin)
-                .setYProtocolHandlers([handlerAddr], [ALLOCATION_PRECISION_BPS]);
+                .setYProtocolHandlers([handlerAddr], [ALLOCATION_PRECISION_BPS], false);
             return { ...ctx, handler, handlerAddr };
         }
 
@@ -497,7 +502,7 @@ describe("YAssetOperationsHandler", function () {
             const handlerAddr = await handler.getAddress();
             await ctx.yAssetOperationsHandler
                 .connect(ctx.accounts.admin)
-                .setYProtocolHandlers([handlerAddr], [ALLOCATION_PRECISION_BPS]);
+                .setYProtocolHandlers([handlerAddr], [ALLOCATION_PRECISION_BPS], false);
             // Fund and distribute
             await ctx.yAsset.mint(ctx.yAssetOperationsHandlerAddress, HUNDRED_TOKENS);
             await ctx.yAssetOperationsHandler
@@ -581,18 +586,6 @@ describe("YAssetOperationsHandler", function () {
                 .withArgs(ZERO_ADDRESS, ctx.accounts.admin.address, TEN_TOKENS);
         });
 
-        it("reverts ZeroAmount on zero amount", async function () {
-            const ctx = await loadFixture(setupFundedHandler);
-            await expect(
-                ctx.yAssetOperationsHandler
-                    .connect(ctx.accounts.admin)
-                    .withdrawalYieldAssets(ctx.handlerAddr, 0n),
-            ).to.be.revertedWithCustomError(
-                ctx.yAssetOperationsHandler,
-                ERRORS.ZeroAmount,
-            );
-        });
-
         it("reverts Unauthorized when called by random caller", async function () {
             const ctx = await loadFixture(setupFundedHandler);
             await expect(
@@ -659,6 +652,7 @@ describe("YAssetOperationsHandler", function () {
                 .setYProtocolHandlers(
                     [h1Addr, h2Addr],
                     [FIFTY_PERCENT_BPS, FIFTY_PERCENT_BPS],
+                    false
                 );
             await ctx.yAsset.mint(ctx.yAssetOperationsHandlerAddress, HUNDRED_TOKENS);
             await ctx.yAssetOperationsHandler
@@ -757,21 +751,6 @@ describe("YAssetOperationsHandler", function () {
             );
         });
 
-        it("reverts ZeroAmount when any amount is zero", async function () {
-            const ctx = await loadFixture(setupTwoFundedHandlers);
-            await expect(
-                ctx.yAssetOperationsHandler
-                    .connect(ctx.accounts.admin)
-                    .withdrawalYieldAssetsMultiple(
-                        [ctx.h1Addr, ctx.h2Addr],
-                        [TEN_TOKENS, 0n],
-                    ),
-            ).to.be.revertedWithCustomError(
-                ctx.yAssetOperationsHandler,
-                ERRORS.ZeroAmount,
-            );
-        });
-
         it("reverts ProtocolHandlerNotFound for an unknown handler in array", async function () {
             const ctx = await loadFixture(setupTwoFundedHandlers);
             await expect(
@@ -821,7 +800,7 @@ describe("YAssetOperationsHandler", function () {
             const handlerAddr = await handler.getAddress();
             await ctx.yAssetOperationsHandler
                 .connect(ctx.accounts.admin)
-                .setYProtocolHandlers([handlerAddr], [ALLOCATION_PRECISION_BPS]);
+                .setYProtocolHandlers([handlerAddr], [ALLOCATION_PRECISION_BPS], false);
             await ctx.yAsset.mint(ctx.yAssetOperationsHandlerAddress, HUNDRED_TOKENS);
             await ctx.yAssetOperationsHandler
                 .connect(ctx.accounts.admin)
@@ -1067,7 +1046,7 @@ describe("YAssetOperationsHandler", function () {
             const handlerAddr = await handler.getAddress();
             await ctx.yAssetOperationsHandler
                 .connect(ctx.accounts.admin)
-                .setYProtocolHandlers([handlerAddr], [ALLOCATION_PRECISION_BPS]);
+                .setYProtocolHandlers([handlerAddr], [ALLOCATION_PRECISION_BPS], false);
 
             const handlers = await ctx.yAssetOperationsHandler.getYProtocolHandlers();
             expect(handlers.length).to.equal(1);
@@ -1087,7 +1066,7 @@ describe("YAssetOperationsHandler", function () {
             const handlerAddr = await handler.getAddress();
             await ctx.yAssetOperationsHandler
                 .connect(ctx.accounts.admin)
-                .setYProtocolHandlers([handlerAddr], [ALLOCATION_PRECISION_BPS]);
+                .setYProtocolHandlers([handlerAddr], [ALLOCATION_PRECISION_BPS], false);
             await ctx.yAsset.mint(ctx.yAssetOperationsHandlerAddress, HUNDRED_TOKENS);
             await ctx.yAssetOperationsHandler
                 .connect(ctx.accounts.admin)
@@ -1103,7 +1082,7 @@ describe("YAssetOperationsHandler", function () {
             const handlerAddr = await handler.getAddress();
             await ctx.yAssetOperationsHandler
                 .connect(ctx.accounts.admin)
-                .setYProtocolHandlers([handlerAddr], [ALLOCATION_PRECISION_BPS]);
+                .setYProtocolHandlers([handlerAddr], [ALLOCATION_PRECISION_BPS], false);
 
             // Distribute 100 to handler
             await ctx.yAsset.mint(ctx.yAssetOperationsHandlerAddress, HUNDRED_TOKENS);
@@ -1123,7 +1102,7 @@ describe("YAssetOperationsHandler", function () {
             const handlerAddr = await handler.getAddress();
             await ctx.yAssetOperationsHandler
                 .connect(ctx.accounts.admin)
-                .setYProtocolHandlers([handlerAddr], [ALLOCATION_PRECISION_BPS]);
+                .setYProtocolHandlers([handlerAddr], [ALLOCATION_PRECISION_BPS], false);
 
             expect(
                 await ctx.yAssetOperationsHandler.getProtocolBalance(handlerAddr),

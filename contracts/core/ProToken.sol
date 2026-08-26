@@ -11,8 +11,9 @@ import "./interfaces/IVersioned.sol";
 /**
  * @title ProToken
  * @author Promis Team
- * @notice ERC20 (18 decimals, EIP-2612 permit) mintable and burnable only by an
- *         authorized minter contract (ProTokenOperations).
+ * @notice ERC20 (18 decimals, EIP-2612 permit) mintable and burnable by the
+ *         primary minter (ProTokenOperations) and by admin-approved bridge
+ *         minters (cross-chain token pools / adapters).
  */
 contract ProToken is
     ERC20Upgradeable,
@@ -51,10 +52,28 @@ contract ProToken is
     /// @notice Timestamp of the last operator price update (updateUSDPrice).
     uint256 private lastPriceUpdateAt;
 
+    /// @notice Authorized to mint/burn (cross-chain).
+    mapping(address => bool) private bridgeMinters;
+
+    /// @notice When true, bridge minters cannot burn (stops NEW outbound bridge transfers).
+    bool private bridgeBurnPaused;
+
+    /// @notice When true, bridge minters cannot mint (blocks INBOUND in-flight completion).
+    bool private bridgeMintPaused;
+
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
     }
+
+    /// @notice Emitted when a bridge minter is added or removed.
+    event BridgeMinterSet(address indexed bridgeMinter, bool allowed);
+
+    /// @notice Emitted when the bridge burn (outbound) pause is toggled.
+    event BridgeBurnPausedSet(bool paused);
+
+    /// @notice Emitted when the bridge mint (inbound) pause is toggled.
+    event BridgeMintPausedSet(bool paused);
 
     /**
      * @notice Initializes the token with name, symbol, settings, and minter.
@@ -80,6 +99,12 @@ contract ProToken is
         proTokenSettings = _proTokenSettings;
         usdPrice = DEFAULT_USD_PRICE;
         priceUpdateCooldown = DEFAULT_PRICE_UPDATE_COOLDOWN;
+
+        lastPriceUpdateAt = block.timestamp;
+
+        emit MinterSet(address(0), _minter);
+        emit USDPriceSet(0, DEFAULT_USD_PRICE);
+        emit PriceUpdateCooldownChanged(0, DEFAULT_PRICE_UPDATE_COOLDOWN);
     }
 
     /// @notice Restricts access to the admin.
@@ -98,9 +123,9 @@ contract ProToken is
         _;
     }
 
-    /// @notice Restricts access to the minter.
+    /// @notice Restricts access to the primary minter or an approved bridge minter.
     modifier onlyMinter() {
-        if (msg.sender != minter) revert NotMinter();
+        if (msg.sender != minter && !bridgeMinters[msg.sender]) revert NotMinter();
         _;
     }
 
@@ -116,11 +141,34 @@ contract ProToken is
     }
 
     /// @inheritdoc IProToken
+    function setBridgeMinter(address bridgeMinter, bool allowed) external override onlyAdmin {
+        if (bridgeMinter == address(0)) revert ZeroAddress();
+
+        bridgeMinters[bridgeMinter] = allowed;
+
+        emit BridgeMinterSet(bridgeMinter, allowed);
+    }
+
+    /// @inheritdoc IProToken
+    function setBridgeBurnPaused(bool _paused) external override onlyAdmin {
+        bridgeBurnPaused = _paused;
+        emit BridgeBurnPausedSet(_paused);
+    }
+
+    /// @inheritdoc IProToken
+    function setBridgeMintPaused(bool _paused) external override onlyAdmin {
+        bridgeMintPaused = _paused;
+        emit BridgeMintPausedSet(_paused);
+    }
+
+    /// @inheritdoc IProToken
     function setUSDPrice(uint256 _price) external override onlyAdmin {
         if (_price < MIN_USD_PRICE && _price != 0) revert InvalidPrice();
 
         uint256 old = usdPrice;
         usdPrice = _price;
+
+        lastPriceUpdateAt = block.timestamp;
 
         emit USDPriceSet(old, _price);
     }
@@ -155,12 +203,7 @@ contract ProToken is
         emit StepSizeChanged(old, _stepSize);
     }
 
-    /**
-     * @notice Sets the minimum interval between operator price updates.
-     * @dev A value of 0 disables the cooldown. Does not reset the running
-     *      cooldown window from the last update.
-     * @param _cooldown New cooldown in seconds.
-     */
+    /// @inheritdoc IProToken
     function setPriceUpdateCooldown(uint256 _cooldown) external override onlyAdmin {
         uint256 old = priceUpdateCooldown;
         priceUpdateCooldown = _cooldown;
@@ -171,17 +214,19 @@ contract ProToken is
     /// @inheritdoc IProToken
     function mint(address to, uint256 amount) external override onlyMinter {
         if (amount == 0) revert InvalidAmount();
+        if (msg.sender != minter && bridgeMintPaused) revert BridgeMintPaused();
         _mint(to, amount);
 
-        emit Minted(to, amount);
+        emit Minted(to, amount, msg.sender);
     }
 
     /// @inheritdoc IProToken
     function burn(address from, uint256 amount) external override onlyMinter {
         if (amount == 0) revert InvalidAmount();
+        if (msg.sender != minter && bridgeBurnPaused) revert BridgeBurnPaused();
         _burn(from, amount);
 
-        emit Burned(from, amount);
+        emit Burned(from, amount, msg.sender);
     }
 
     /// @inheritdoc IProToken
@@ -210,6 +255,26 @@ contract ProToken is
         return proTokenSettings;
     }
 
+    /// @inheritdoc IProToken
+    function getCCIPAdmin() external view override returns (address) {
+        return IProTokenSettings(proTokenSettings).getBridgeAdmin();
+    }
+
+    /// @inheritdoc IProToken
+    function isBridgeMinter(address account) external view override returns (bool) {
+        return bridgeMinters[account];
+    }
+
+    /// @inheritdoc IProToken
+    function isBridgeBurnPaused() external view returns (bool) {
+        return bridgeBurnPaused;
+    }
+
+    /// @inheritdoc IProToken
+    function isBridgeMintPaused() external view returns (bool) {
+        return bridgeMintPaused;
+    }
+    
     function _authorizeUpgrade(
         address newImplementation
     ) internal override onlyAdmin {

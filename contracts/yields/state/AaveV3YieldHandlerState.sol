@@ -27,6 +27,9 @@ abstract contract AaveV3YieldHandlerState {
     /// @notice AAVE rewards controller for incentive collection
     address internal incentivesController;
 
+    /// @notice Impairment tolerance (deficit/supply). 0 = refuse any nonzero deficit.
+    uint256 public impairmentToleranceBps;
+
     /// @notice Storage gap for future upgrades
-    uint256[50] internal __gap;
+    uint256[43] internal __gap;
 }

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Proprietary
 pragma solidity 0.8.29;
-pragma abicoder v2;
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
@@ -84,10 +83,25 @@ contract ProTokenPlus is
         // Add tiers
         for (uint8 i = 0; i < _tierIds.length; i++) {
             uint8 tierId = _tierIds[i];
+            if (bytes(_tierConfigs[i].name).length == 0) revert EmptyTierName();
             if (tierId != FLOOR_TIER_ID && _tierConfigs[i].duration == 0) revert InvalidDuration();
+            if (tierId == FLOOR_TIER_ID && _tierConfigs[i].isDepositable) revert FloorTierNotDepositable();
+
             tierIds.push(tierId);
             tiers[tierId] = _tierConfigs[i];
+            emit TierAdded(
+                tierId,
+                _tierConfigs[i].name,
+                _tierConfigs[i].apr,
+                _tierConfigs[i].duration,
+                _tierConfigs[i].minDeposit,
+                _tierConfigs[i].isDepositable
+            );
         }
+
+        emit ProUSDSet(address(0), _proUSD);
+        emit UnbondingPeriodSet(0, unbondingPeriod);
+        
     }
 
     // ================================================
@@ -133,8 +147,7 @@ contract ProTokenPlus is
     /// @inheritdoc IProTokenPlus
     function createDepositRequest(
         uint8 _tierID,
-        uint256 _amount,
-        uint256[] calldata _unlockedPositionsToMerge
+        uint256 _amount
     ) 
         external
         override
@@ -144,7 +157,7 @@ contract ProTokenPlus is
         _delegateToOperations(
             abi.encodeCall(
                 IProTokenPlusOperations.executeCreateDepositRequest,
-                (msg.sender, _tierID, _amount, _unlockedPositionsToMerge)
+                (msg.sender, _tierID, _amount)
             )
         );
     }
@@ -171,8 +184,7 @@ contract ProTokenPlus is
 
     /// @inheritdoc IProTokenPlus
     function createWithdrawRequest(
-        uint256[] calldata _positionIDs,
-        uint256[] calldata _unlockedPositionsToMerge
+        uint256[] calldata _positionIDs
     ) 
         external 
         override
@@ -182,7 +194,7 @@ contract ProTokenPlus is
         _delegateToOperations(
             abi.encodeCall(
                 IProTokenPlusOperations.executeCreateWithdrawRequest,
-                (msg.sender, _positionIDs, _unlockedPositionsToMerge)
+                (msg.sender, _positionIDs)
             )
         );
     }
@@ -209,13 +221,12 @@ contract ProTokenPlus is
 
     /// @inheritdoc IProTokenPlus
     function completeWithdraw(
-        uint256[] calldata unbondingIndices,
-        uint256[] calldata unlockedPositionsToMerge
+        uint256[] calldata unbondingIndices
     ) external override nonReentrant whenNotPaused {
         _delegateToOperations(
             abi.encodeCall(
                 IProTokenPlusOperations.executeCompleteWithdraw,
-                (msg.sender, unbondingIndices, unlockedPositionsToMerge)
+                (msg.sender, unbondingIndices)
             )
         );
     }
@@ -224,8 +235,7 @@ contract ProTokenPlus is
     function relock(
         uint256[] calldata positionIds,
         uint256 amount,
-        uint8 toTierId,
-        uint256[] calldata unlockedPositionsToMerge
+        uint8 toTierId
     )
         external
         override
@@ -240,8 +250,7 @@ contract ProTokenPlus is
                     msg.sender,
                     positionIds,
                     amount,
-                    toTierId,
-                    unlockedPositionsToMerge
+                    toTierId
                 )
             )
         );
@@ -290,9 +299,10 @@ contract ProTokenPlus is
         if (tiers[tierId].isActive || bytes(tiers[tierId].name).length > 0) {
             revert TierError(tierId);
         }
-
+        if (bytes(config.name).length == 0) revert EmptyTierName(); 
         if (tierId != FLOOR_TIER_ID && config.duration == 0) revert InvalidDuration();
-
+        if (tierId == FLOOR_TIER_ID && config.isDepositable) revert FloorTierNotDepositable();
+        
         tierIds.push(tierId);
         tiers[tierId] = config;
 
@@ -323,6 +333,7 @@ contract ProTokenPlus is
 
         // Non-floor tiers must have duration > 0
         if (tierId != FLOOR_TIER_ID && duration == 0) revert InvalidDuration();
+        if (tierId == FLOOR_TIER_ID && isDepositable) revert FloorTierNotDepositable();
 
         tier.name = name;
         tier.apr = apr;

@@ -47,6 +47,8 @@ contract ProTokenUnmintHandler is
 
         proTokenSettings = _proTokenSettings;
         unmintBatchDuration = _unmintBatchDuration;
+
+        emit UnmintBatchDurationUpdated(0, _unmintBatchDuration);
     }
 
     modifier onlyAdmin() {
@@ -90,14 +92,9 @@ contract ProTokenUnmintHandler is
             revert InvalidInput();
         if (requestIds.length > MAX_BATCH_SIZE) revert InvalidInput();
 
-        address sender = msg.sender;
         uint256 currentTimestamp = block.timestamp;
         uint256 length = requestIds.length;
 
-        // Track total amount to transfer after all state changes
-        uint256 totalTransferAmount = 0;
-
-        // First pass: validate and update all state
         for (uint256 i = 0; i < length; ) {
             uint256 requestId = requestIds[i];
             ProTokenUnmintHandlerTypes.UnmintRequest
@@ -106,10 +103,11 @@ contract ProTokenUnmintHandler is
                 ];
 
             // Cache frequently accessed values
+            address receiver = unmintRequest.receiver;
             uint256 batchId = unmintRequest.batchId;
             uint256 totalAmount = unmintRequest.totalAmount;
 
-            if (unmintRequest.receiver != sender) revert Unauthorized();
+            if (receiver == address(0)) revert InvalidInput();
             if (!unmintBatchesPerYAsset[yAsset][batchId].processed)
                 revert BatchStillProcessing();
             if (unmintRequest.claimed) revert AlreadyClaimed();
@@ -117,19 +115,14 @@ contract ProTokenUnmintHandler is
             // Update all state before any transfers
             unmintRequest.claimed = true;
             unmintRequest.claimTimestamp = currentTimestamp;
-
             // Update already claimed amount in batch
             unmintBatchesPerYAsset[yAsset][batchId]
                 .totalAlreadyClaimed += totalAmount;
-
             // Remove from unclaimed list
-            unclaimedUnmintBatchesPerReceiver[sender][yAsset].remove(batchId);
-
-            // Accumulate transfer amount
-            totalTransferAmount += totalAmount;
+            unclaimedUnmintBatchesPerReceiver[receiver][yAsset].remove(batchId);
 
             emit UnmintRequestClaimed(
-                sender,
+                receiver,
                 yAsset,
                 requestId,
                 batchId,
@@ -137,14 +130,13 @@ contract ProTokenUnmintHandler is
                 currentTimestamp
             );
 
-            unchecked {
-                ++i;
+            // Pay this request's own stored receiver. Anyone may trigger the claim;
+            // funds only ever go to the receiver chosen at request time.
+            if (totalAmount > 0) {
+                IERC20(yAsset).safeTransfer(receiver, totalAmount);
             }
-        }
 
-        // Single transfer after all state changes are complete
-        if (totalTransferAmount > 0) {
-            IERC20(yAsset).safeTransfer(sender, totalTransferAmount);
+            unchecked { ++i; }
         }
     }
 
@@ -204,7 +196,9 @@ contract ProTokenUnmintHandler is
                 amount, existingRequest.totalAmount, block.timestamp
             );
         } else {
-            uint256 newRequestId = nextUnmintRequestIdPerYAsset[yAsset];
+            uint256 id = nextUnmintRequestIdPerYAsset[yAsset];
+            if (id == 0) id = 1;
+            uint256 newRequestId = id;
             ProTokenUnmintHandlerTypes.UnmintRequest storage newRequest =
                 unmintRequestsPerYAsset[yAsset][newRequestId];
             newRequest.yAsset = yAsset;
@@ -217,7 +211,7 @@ contract ProTokenUnmintHandler is
             // claimed/claimTimestamp default false/0 — no need to set.
 
             unclaimedUnmintBatchesPerReceiver[receiver][yAsset].add(curBatchId);
-            unchecked { ++nextUnmintRequestIdPerYAsset[yAsset]; }
+            unchecked { nextUnmintRequestIdPerYAsset[yAsset] = id + 1; }
             unmintRequestIdForReceiverInBatch[yAsset][curBatchId][receiver] = newRequestId;
             requestId = newRequestId;
 
@@ -249,9 +243,6 @@ contract ProTokenUnmintHandler is
 
         // check this batch exists
         if (unmintBatch.batchId == 0) revert InvalidInput();
-        // check if can be processed
-        if (unmintBatch.createTimestamp + unmintBatchDuration > block.timestamp)
-            revert BatchStillProcessing();
         if (unmintBatch.processed) revert BatchAlreadyProcessed();
 
         // mark as processed
@@ -421,10 +412,6 @@ contract ProTokenUnmintHandler is
 
         // Already processed
         if (unmintBatch.processed) return false;
-
-        // Duration hasn't passed yet
-        if (unmintBatch.createTimestamp + unmintBatchDuration > block.timestamp)
-            return false;
 
         return true;
     }

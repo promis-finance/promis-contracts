@@ -76,6 +76,9 @@ contract ProTokenOperations is
 
         minDepositBase = 100e18;
         minWithdrawBase = 100e18;
+
+        emit MinDepositBaseSet(0, minDepositBase);
+        emit MinWithdrawBaseSet(0, minWithdrawBase);
     }
 
     /// @notice Restricts access to the admin.
@@ -394,7 +397,7 @@ contract ProTokenOperations is
             // Reduce the amount to unmint by the fee amount
             yAssetToReceiveAmount -= feeAmount;
 
-            // Fee stays on the protocol (protocol keeps it)
+            IYAssetOperationsHandler(yAssetSettings.settings.yOperationsHandler).recordProtocolFee(_yAsset, feeAmount);
         }
 
         if (yAssetToReceiveAmount < _minAmountOut)
@@ -412,8 +415,12 @@ contract ProTokenOperations is
         if (backlog == 0 && yOps.previewPayOut(yAssetToReceiveAmount)) {
             try yOps.payOut(_recipient, yAssetToReceiveAmount) {
                 paidInstant = true;
-            } catch {
-                // fall through to the queue path below
+            } catch (bytes memory reason) {
+                if (reason.length >= 4 && bytes4(reason) == IYAssetOperationsHandler.PayoutDeliveryFailed.selector) {
+                    assembly { revert(add(reason, 0x20), mload(reason)) }
+                    // else: sourcing/liquidity failure (InsufficientBalance, unreadable venue,
+                    // or dataless revert) → fall through to the queue as designed.
+                }
             }
         }
 
@@ -628,8 +635,10 @@ contract ProTokenOperations is
                 yAssetSettings.settings.priceSettings,
                 yAssetSettings.settings.decimals
             );
-            if (rep.assetAmountUSD < min)
-                revert BelowMinDeposit(rep.assetAmountUSD, min);
+            uint256 cap = yAssetSettings.settings.priceSettings.usdCap;
+            uint256 cappedUSD = rep.assetUSD > cap ? cap : rep.assetUSD;
+            uint256 cappedAmountUSD = (_amount * cappedUSD) / (10 ** yAssetSettings.settings.decimals);
+            if (cappedAmountUSD < min) revert BelowMinDeposit(cappedAmountUSD, min);
         }
     }
 
@@ -667,7 +676,10 @@ contract ProTokenOperations is
             settings.yAssetSettings.settings.priceSettings,
             settings.yAssetSettings.settings.decimals
         );
-        ctx.yAssetUSD = yAssetUsdRepresentation.assetUSD;
+        uint256 cap = settings.yAssetSettings.settings.priceSettings.usdCap;
+        ctx.yAssetUSD = yAssetUsdRepresentation.assetUSD > cap
+            ? cap
+            : yAssetUsdRepresentation.assetUSD;
         ctx.proTokenUSD = proTokenUsdRepresentation.assetUSD;
     }
 
@@ -873,7 +885,7 @@ contract ProTokenOperations is
 
         // Validate price deviation if multiple oracles responded
         if (_oracles.length > 1) {
-            _validatePriceDeviation(prices, _oracles.length, aggregatedPrice);
+            _validatePriceDeviation(prices, _oracles.length);
         }
     }
 
@@ -902,13 +914,11 @@ contract ProTokenOperations is
 
     function _validatePriceDeviation(
         uint256[] memory prices,
-        uint256 length,
-        uint256 medianPrice
+        uint256 length
     ) internal view {
         ProTokenOperationsTypes.OracleAggregationSettings
             memory settings = IProTokenSettings(proTokenSettings)
                 .getOracleAggregationSettings();
-
         if (settings.maxPriceDeviation == 0) {
             return; // No deviation check configured
         }
@@ -918,26 +928,6 @@ contract ProTokenOperations is
         uint256 spread = ((maxPrice - minPrice) * PERCENTAGE_PRECISION) / minPrice;
         if (spread > settings.maxPriceDeviation) {
             revert OraclePriceDeviation(spread, settings.maxPriceDeviation);
-        }
-        
-        for (uint256 i = 0; i < length; i++) {
-            uint256 deviation;
-            if (prices[i] > medianPrice) {
-                deviation =
-                    ((prices[i] - medianPrice) * PERCENTAGE_PRECISION) /
-                    medianPrice;
-            } else {
-                deviation =
-                    ((medianPrice - prices[i]) * PERCENTAGE_PRECISION) /
-                    medianPrice;
-            }
-
-            if (deviation > settings.maxPriceDeviation) {
-                revert OraclePriceDeviation(
-                    deviation,
-                    settings.maxPriceDeviation
-                );
-            }
         }
     }
 

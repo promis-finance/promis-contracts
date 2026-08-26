@@ -62,6 +62,16 @@ interface IYAssetOperationsHandler {
         uint256 amount
     ) external returns (uint256 sent);
 
+    /**
+     * @notice Records protocol owned fee during unminting.
+     * @dev Callable by ProTokenOperations.
+     * @param yAsset Address of yAsset
+     * @param amount Amount of yAsset as fee
+     */
+    function recordProtocolFee(
+        address yAsset, 
+        uint256 amount
+    ) external;
     // ================================================
     // =========== Admin External Functions ===========
     // ================================================
@@ -70,11 +80,22 @@ interface IYAssetOperationsHandler {
      * @notice Configures the set of protocol handlers that receive allocations.
      * @param _handlers Handler contract addresses
      * @param _allocations Allocation basis points applied to `_amount` in {allocateYAssets}.
+     * @param _forced Allows removal of handlers with bad balance of query.
      */
     function setYProtocolHandlers(
         address[] memory _handlers,
-        uint256[] memory _allocations
+        uint256[] memory _allocations,
+        bool _forced
     ) external;
+
+    
+    /**
+     * @notice Collects accrued unmint fees.
+     * @param _yAsset The address of yAsset
+     * @param _to The receiver of the accrued yAsset fees
+     * @param _amount The amount of the accrued fees. 0 means all.
+     */
+    function collectFee(address _yAsset, address _to, uint256 _amount) external;
 
     // ================================================
     // ================ View functions ================
@@ -132,9 +153,14 @@ interface IYAssetOperationsHandler {
      */
     function getYAsset() external view returns (address);
 
+
     // ================================================
     // ==================== Events ====================
     // ================================================
+    /**
+     * @notice Emitted after a handler with balance is replaced
+     */
+    event ProtocolHandlerRemovedWithBalance(address old, uint256 residual, bool verified);
 
     /**
      * @notice Emitted after the handler configuration is updated.
@@ -157,6 +183,11 @@ interface IYAssetOperationsHandler {
     event YAssetsDistributed(address indexed handler, uint256 amount);
 
     /**
+     * @notice Emitted when allocation is skipped if acceptsAllocation returns false.
+     */
+    event AllocationSkipped(address indexed handlerAddr, uint256 allocationAmount);
+
+    /**
      * @notice Emitted when a handler withdraw operation completes.
      */
     event YAssetsWithdrawn(
@@ -176,6 +207,30 @@ interface IYAssetOperationsHandler {
         uint256 amount
     );
 
+    /**
+     * @notice Emitted to track unmint fee accrual.
+     */
+    event UnmintFeeAccrued(
+        address indexed yAsset, 
+        uint256 indexed feeAmount
+    );
+
+    /**
+     * @notice Emitted when protocol unmint fees are collected. 
+     */
+    event ProtocolFeesCollected(
+        address yAsset, 
+        address to, 
+        uint256 amount
+    );
+
+    /**
+     * @notice Emitted when a handler is detached with bad balance of query. 
+    */
+    event HandlerDetachedUnverified(
+        address indexed handler
+    );
+
     // ================================================
     // ==================== Errors ====================
     // ================================================
@@ -185,8 +240,11 @@ interface IYAssetOperationsHandler {
     error ZeroAmount();
     error NoHandlers();
     error AssetNotReceived();
+    error PayoutDeliveryFailed(address to, uint256 amount);
     error Unauthorized();
     error InvalidAllocation();
+    error HandlerHasBalance(address handler, uint256 balance);
+    error HandlerBalanceUnverifiable(address handler);
     error ProtocolHandlerNotFound();
     error InsufficientBalance();
     error ArrayLengthMismatch();
@@ -194,4 +252,5 @@ interface IYAssetOperationsHandler {
     error Paused();
     error HandlerAssetMismatch(address handler);
     error DuplicateHandler();
+    error CollectExceedsAccrued(uint256 amount, uint256 owed);
 }
