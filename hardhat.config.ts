@@ -87,16 +87,27 @@ const config: HardhatUserConfig = {
       url: "http://localhost:8545",
       chainId: 31337
     },
-    // Testnets
-    bsc_testnet: {
+    // Main
+    ethereum: {
+      url: process.env.ETHEREUM_RPC || "https://gateway.tenderly.co/public/mainnet",
+      chainId: 1,
+      accounts: process.env.MAINNET_PRIVATE_KEY ? [process.env.MAINNET_PRIVATE_KEY] : []
+    },
+    katana: {
+      url: process.env.KATANA_RPC || "https://rpc.katanarpc.com",
+      chainId: 747474,
+      accounts: process.env.MAINNET_PRIVATE_KEY ? [process.env.MAINNET_PRIVATE_KEY] : []
+    },
+    // Test
+    ethereumTestnet: {
+      chainId: 11155111,
+      url: process.env.ETHEREUM_TESTNET_RPC || "https://gateway.tenderly.co/public/sepolia",
+      accounts: process.env.TESTNET_PRIVATE_KEY ? [process.env.TESTNET_PRIVATE_KEY] : []
+    },
+    bscTestnet: {
       url: process.env.BSC_TESTNET_RPC || "https://data-seed-prebsc-1-s1.binance.org:8545/",
       chainId: 97,
-      accounts: process.env.BSC_TESTNET_PRIVATE_KEY ? [process.env.BSC_TESTNET_PRIVATE_KEY] : []
-    },
-    sepolia: {
-      chainId: 11155111,
-      url: process.env.SEPOLIA_TESTNET_RPC || "",
-      accounts: process.env.SEPOLIA_TESTNET_PRIVATE_KEY ? [process.env.SEPOLIA_TESTNET_PRIVATE_KEY] : []
+      accounts: process.env.TESTNET_PRIVATE_KEY ? [process.env.TESTNET_PRIVATE_KEY] : []
     },
   },
   etherscan: {
